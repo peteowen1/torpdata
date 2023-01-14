@@ -1,2 +1,2 @@
-# torp-data
+# torpdata
 torp data repository
