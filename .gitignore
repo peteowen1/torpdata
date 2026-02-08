@@ -1,0 +1,13 @@
+# R files
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Data files (stored in GitHub releases)
+*.parquet
+*.rds
+*.rda
+
+# Temp files
+*.tmp
