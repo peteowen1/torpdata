@@ -65,16 +65,20 @@ jobs:
             devtools
 
       - name: Run daily release
+        id: daily_release
         working-directory: torp
         run: |
           echo "Starting daily data release..."
           Rscript -e "
             devtools::load_all()
             source('data-raw/01-data/daily_release.R')
-            run_daily_release(force = ${{ inputs.force_release || false }})
+            force <- as.logical(Sys.getenv('FORCE_RELEASE', 'FALSE'))
+            run_daily_release(force = force)
           "
+          echo "release_success=true" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_RELEASE: ${{ inputs.force_release || 'FALSE' }}
 
       - name: Rebuild historical aggregates (if requested)
         if: ${{ inputs.rebuild_aggregates }}
@@ -95,6 +99,7 @@ jobs:
           echo "afl_round=$AFL_ROUND" >> $GITHUB_OUTPUT
 
       - name: Dispatch ratings trigger to torp
+        if: steps.daily_release.outputs.release_success == 'true'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.WORKFLOW_PAT }}
