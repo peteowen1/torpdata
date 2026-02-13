@@ -68,7 +68,6 @@ jobs:
         id: daily_release
         working-directory: torp
         run: |
-          echo "Starting daily data release..."
           Rscript -e "
             devtools::load_all()
             source('data-raw/01-data/daily_release.R')
@@ -80,12 +79,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_RELEASE: ${{ inputs.force_release || 'FALSE' }}
 
-      - name: Rebuild historical aggregates (if requested)
-        if: ${{ inputs.rebuild_aggregates }}
+      - name: Rebuild historical aggregates
+        if: inputs.rebuild_aggregates
         working-directory: torp
-        run: |
-          echo "Rebuilding historical aggregated files..."
-          Rscript data-raw/01-data/create_aggregated_files.R
+        run: Rscript data-raw/01-data/create_aggregated_files.R
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -109,28 +106,35 @@ jobs:
 
       - name: Create release summary
         run: |
-          echo "## Daily Data Release Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Date:** $(date +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "**AFL Season:** ${{ steps.release_info.outputs.afl_season }}" >> $GITHUB_STEP_SUMMARY
-          echo "**AFL Round:** ${{ steps.release_info.outputs.afl_round }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Data Updated" >> $GITHUB_STEP_SUMMARY
-          echo "- Chains data (per-round + aggregated)" >> $GITHUB_STEP_SUMMARY
-          echo "- Play-by-play data (per-round + aggregated)" >> $GITHUB_STEP_SUMMARY
-          echo "- Expected goals (xG) data" >> $GITHUB_STEP_SUMMARY
-          echo "- Player statistics" >> $GITHUB_STEP_SUMMARY
-          echo "- Fixtures" >> $GITHUB_STEP_SUMMARY
-          echo "- Results" >> $GITHUB_STEP_SUMMARY
-          echo "- Team lineups" >> $GITHUB_STEP_SUMMARY
-          echo "- Player details" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Downstream" >> $GITHUB_STEP_SUMMARY
-          echo "- Dispatched ratings-trigger to peteowen1/torp" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Force Flags" >> $GITHUB_STEP_SUMMARY
-          echo "- Force release: ${{ inputs.force_release || false }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Rebuild aggregates: ${{ inputs.rebuild_aggregates || false }}" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Daily Data Release Summary"
+            echo ""
+            echo "**Date:** $(date +'%Y-%m-%d %H:%M UTC')"
+            echo "**AFL Season:** $AFL_SEASON"
+            echo "**AFL Round:** $AFL_ROUND"
+            echo ""
+            echo "### Data Updated"
+            echo "- Chains data (per-round + aggregated)"
+            echo "- Play-by-play data (per-round + aggregated)"
+            echo "- Expected goals (xG) data"
+            echo "- Player statistics"
+            echo "- Fixtures"
+            echo "- Results"
+            echo "- Team lineups"
+            echo "- Player details"
+            echo ""
+            echo "### Downstream"
+            echo "- Dispatched ratings-trigger to peteowen1/torp"
+            echo ""
+            echo "### Force Flags"
+            echo "- Force release: $FORCE_RELEASE"
+            echo "- Rebuild aggregates: $REBUILD_AGGREGATES"
+          } >> $GITHUB_STEP_SUMMARY
+        env:
+          AFL_SEASON: ${{ steps.release_info.outputs.afl_season }}
+          AFL_ROUND: ${{ steps.release_info.outputs.afl_round }}
+          FORCE_RELEASE: ${{ inputs.force_release || false }}
+          REBUILD_AGGREGATES: ${{ inputs.rebuild_aggregates || false }}
 
       - name: Notify on failure
         if: failure()
@@ -154,7 +158,6 @@ jobs:
             **Manual Recovery:**
             - Run workflow manually with "Force release" checked`;
 
-            // Check for existing open issue
             const issues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
