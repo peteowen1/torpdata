@@ -4,7 +4,8 @@
 .RData
 .Ruserdata
 
-# Data files (stored in GitHub releases)
+# Data files (stored in GitHub releases, loaded locally on demand)
+data/
 *.parquet
 *.rds
 *.rda
