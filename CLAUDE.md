@@ -24,6 +24,7 @@ Data files are stored as GitHub releases and downloaded on-demand by the `torp` 
 | `results-data` | Match results |
 | `teams-data` | Team lineup data |
 | `player_details-data` | Player biographical data |
+| `player_game-data` | Player-game level data |
 | `predictions` | Match predictions |
 | `reference-data` | Reference data (plyr_gm_df, torp_df_total) |
 
