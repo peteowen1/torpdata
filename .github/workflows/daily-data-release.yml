@@ -79,6 +79,25 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_RELEASE: ${{ inputs.force_release || 'FALSE' }}
 
+      - name: Verify release uploads
+        id: verify_release
+        working-directory: torp
+        run: |
+          # Verify at least one expected parquet file exists on the release
+          Rscript -e "
+            devtools::load_all()
+            season <- get_afl_season()
+            expected_file <- paste0('pbp_data_', season, '_all.parquet')
+            releases <- piggyback::pb_list(repo = 'peteowen1/torpdata', tag = 'pbp-data')
+            if (!expected_file %in% releases[['file_name']]) {
+              stop('Release verification failed: ', expected_file, ' not found on pbp-data release')
+            }
+            cat('Release verified:', expected_file, 'found\n')
+          "
+          echo "release_verified=true" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Rebuild historical aggregates
         if: inputs.rebuild_aggregates
         working-directory: torp
@@ -96,7 +115,7 @@ jobs:
           echo "afl_round=$AFL_ROUND" >> $GITHUB_OUTPUT
 
       - name: Dispatch ratings trigger to torp
-        if: steps.daily_release.outputs.release_success == 'true'
+        if: steps.verify_release.outputs.release_verified == 'true'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.WORKFLOW_PAT }}
