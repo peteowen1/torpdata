@@ -12,3 +12,7 @@ data/
 
 # Temp files
 *.tmp
+
+# Claude Code files
+.claude/
+CLAUDE.md
