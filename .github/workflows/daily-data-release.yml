@@ -74,7 +74,7 @@ jobs:
             force <- as.logical(Sys.getenv('FORCE_RELEASE', 'FALSE'))
             run_daily_release(force = force)
           "
-          echo "release_success=true" >> $GITHUB_OUTPUT
+          echo "release_done=true" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_RELEASE: ${{ inputs.force_release || 'FALSE' }}
@@ -83,17 +83,44 @@ jobs:
         id: verify_release
         working-directory: torp
         run: |
-          # Verify at least one expected parquet file exists on the release
           Rscript -e "
-            devtools::load_all()
-            season <- get_afl_season()
-            expected_file <- paste0('pbp_data_', season, '_all.parquet')
-            releases <- piggyback::pb_list(repo = 'peteowen1/torpdata', tag = 'pbp-data')
-            if (!expected_file %in% releases[['file_name']]) {
-              stop('Release verification failed: ', expected_file, ' not found on pbp-data release')
+            season <- as.integer(format(Sys.Date(), '%Y'))
+
+            expected <- list(
+              list(file = paste0('pbp_data_', season, '_all.parquet'),    tag = 'pbp-data'),
+              list(file = paste0('chains_data_', season, '_all.parquet'), tag = 'chains-data'),
+              list(file = paste0('player_stats_', season, '.parquet'),    tag = 'player_stats-data')
+            )
+
+            max_age_hours <- 24
+
+            for (e in expected) {
+              releases <- tryCatch(
+                piggyback::pb_list(repo = 'peteowen1/torpdata', tag = e[['tag']]),
+                error = function(err) {
+                  stop('GitHub API error querying ', e[['tag']], ' release. ',
+                       'This may be transient -- re-run the workflow. ',
+                       'Original error: ', conditionMessage(err))
+                }
+              )
+
+              file_row <- releases[releases[['file_name']] == e[['file']], ]
+              if (nrow(file_row) == 0) {
+                stop('Verification failed: ', e[['file']], ' not found on ', e[['tag']], ' release')
+              }
+
+              upload_time <- as.POSIXct(file_row[['timestamp']][1])
+              age_hours <- as.numeric(difftime(Sys.time(), upload_time, units = 'hours'))
+              if (age_hours > max_age_hours) {
+                stop('Verification failed: ', e[['file']], ' exists but was last updated ',
+                     round(age_hours), ' hours ago (max ', max_age_hours, 'h). ',
+                     'Expected a fresh upload from this run.')
+              }
+
+              cat('Verified:', e[['file']], '- uploaded', round(age_hours, 1), 'hours ago\n')
             }
-            cat('Release verified:', expected_file, 'found\n')
-          "
+            cat('All critical releases verified.\n')
+          " || { echo "Release verification failed"; exit 1; }
           echo "release_verified=true" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
