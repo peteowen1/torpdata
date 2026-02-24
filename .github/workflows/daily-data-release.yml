@@ -72,14 +72,16 @@ jobs:
             devtools::load_all()
             source('data-raw/01-data/daily_release.R')
             force <- as.logical(Sys.getenv('FORCE_RELEASE', 'FALSE'))
-            run_daily_release(force = force)
+            result <- run_daily_release(force = force)
+            cat(paste0('release_done=', tolower(result), '\n'),
+                file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
           "
-          echo "release_done=true" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_RELEASE: ${{ inputs.force_release || 'FALSE' }}
 
       - name: Verify release uploads
+        if: steps.daily_release.outputs.release_done == 'true'
         id: verify_release
         working-directory: torp
         run: |
@@ -133,6 +135,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get release info
+        if: steps.daily_release.outputs.release_done == 'true'
         id: release_info
         working-directory: torp
         run: |
@@ -151,6 +154,7 @@ jobs:
           client-payload: '{"season": "${{ steps.release_info.outputs.afl_season }}", "round": "${{ steps.release_info.outputs.afl_round }}"}'
 
       - name: Create release summary
+        if: steps.daily_release.outputs.release_done == 'true'
         run: |
           {
             echo "## Daily Data Release Summary"
@@ -181,6 +185,18 @@ jobs:
           AFL_ROUND: ${{ steps.release_info.outputs.afl_round }}
           FORCE_RELEASE: ${{ inputs.force_release || false }}
           REBUILD_AGGREGATES: ${{ inputs.rebuild_aggregates || false }}
+
+      - name: No-data summary
+        if: steps.daily_release.outputs.release_done != 'true'
+        run: |
+          {
+            echo "## Daily Data Release - No New Data"
+            echo ""
+            echo "**Date:** $(date +'%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "No new games detected. Release skipped."
+            echo "This is expected during the off-season or between rounds."
+          } >> $GITHUB_STEP_SUMMARY
 
       - name: Notify on failure
         if: failure()
