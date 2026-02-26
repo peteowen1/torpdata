@@ -1,0 +1,92 @@
+name: Build blog data
+
+on:
+  workflow_dispatch:
+  # To trigger after the daily pipeline, uncomment and add
+  # `if: github.event.workflow_run.conclusion == 'success'` to the job
+  # (completed fires on both success and failure):
+  # workflow_run:
+  #   workflows: ["Daily Data Release"]
+  #   types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::arrow
+            any::dplyr
+
+      - name: Download source parquets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p source
+          if ! gh release download team_ratings-data -p "team_ratings.parquet" -D source; then
+            echo "::error::Failed to download team_ratings.parquet from team_ratings-data release"
+            exit 1
+          fi
+
+          YEAR=$(date +%Y)
+          if gh release download player_season_ratings-data -p "player_season_ratings_${YEAR}.parquet" -D source 2>/dev/null; then
+            echo "Downloaded player_season_ratings for ${YEAR}"
+          elif gh release download player_season_ratings-data -p "player_season_ratings_$((YEAR-1)).parquet" -D source 2>/dev/null; then
+            echo "::warning::Fell back to player_season_ratings_$((YEAR-1)).parquet"
+          else
+            echo "::error::Failed to download player_season_ratings for ${YEAR} or $((YEAR-1))"
+            exit 1
+          fi
+
+          if gh release download predictions -p "predictions_${YEAR}.parquet" -D source 2>/dev/null; then
+            echo "Downloaded predictions for ${YEAR}"
+          elif gh release download predictions -p "predictions_$((YEAR-1)).parquet" -D source 2>/dev/null; then
+            echo "::warning::Fell back to predictions_$((YEAR-1)).parquet"
+          else
+            echo "::error::Failed to download predictions for ${YEAR} or $((YEAR-1))"
+            exit 1
+          fi
+
+      - name: Aggregate
+        run: Rscript scripts/build_blog_data.R
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wrangler
+        run: npm install -g wrangler@3
+
+      - name: Upload to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_R2_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Cloudflare credentials not configured"
+            exit 1
+          fi
+          shopt -s nullglob
+          files=(blog/*.parquet)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No parquet files found in blog/ — R aggregation may have failed"
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            echo "Uploading $(basename $f)..."
+            if ! wrangler r2 object put "inthegame-data/$(basename $f)" --file "$f"; then
+              echo "::error::Failed to upload $(basename $f) to R2"
+              exit 1
+            fi
+          done
+          echo "Uploaded ${#files[@]} files to R2"
