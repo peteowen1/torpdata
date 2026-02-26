@@ -2,9 +2,9 @@ name: Build blog data
 
 on:
   workflow_dispatch:
-  # Uncomment to trigger after your main data pipeline:
+  # Uncomment to trigger after the daily data pipeline:
   # workflow_run:
-  #   workflows: ["Update data"]
+  #   workflows: ["Daily Data Release"]
   #   types: [completed]
 
 permissions:
@@ -30,11 +30,25 @@ jobs:
         run: |
           mkdir -p source
           gh release download team_ratings-data -p "team_ratings.parquet" -D source
+
           YEAR=$(date +%Y)
-          gh release download player_season_ratings-data -p "player_season_ratings_${YEAR}.parquet" -D source || \
-            gh release download player_season_ratings-data -p "player_season_ratings_$((YEAR-1)).parquet" -D source
-          gh release download predictions -p "predictions_${YEAR}.parquet" -D source || \
-            gh release download predictions -p "predictions_$((YEAR-1)).parquet" -D source
+          if gh release download player_season_ratings-data -p "player_season_ratings_${YEAR}.parquet" -D source 2>/dev/null; then
+            echo "Downloaded player_season_ratings for ${YEAR}"
+          elif gh release download player_season_ratings-data -p "player_season_ratings_$((YEAR-1)).parquet" -D source 2>/dev/null; then
+            echo "::warning::Fell back to player_season_ratings_$((YEAR-1)).parquet"
+          else
+            echo "::error::Failed to download player_season_ratings for ${YEAR} or $((YEAR-1))"
+            exit 1
+          fi
+
+          if gh release download predictions -p "predictions_${YEAR}.parquet" -D source 2>/dev/null; then
+            echo "Downloaded predictions for ${YEAR}"
+          elif gh release download predictions -p "predictions_$((YEAR-1)).parquet" -D source 2>/dev/null; then
+            echo "::warning::Fell back to predictions_$((YEAR-1)).parquet"
+          else
+            echo "::error::Failed to download predictions for ${YEAR} or $((YEAR-1))"
+            exit 1
+          fi
 
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
@@ -44,4 +58,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add blog/
-          git diff --cached --quiet || git commit -m "Update blog data" && git push
+          if ! git diff --cached --quiet; then
+            git commit -m "Update blog data"
+            git push
+          fi

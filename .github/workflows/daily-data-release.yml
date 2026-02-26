@@ -187,7 +187,7 @@ jobs:
           REBUILD_AGGREGATES: ${{ inputs.rebuild_aggregates || false }}
 
       - name: No-data summary
-        if: steps.daily_release.outputs.release_done != 'true'
+        if: steps.daily_release.outcome == 'success' && steps.daily_release.outputs.release_done != 'true'
         run: |
           {
             echo "## Daily Data Release - No New Data"
