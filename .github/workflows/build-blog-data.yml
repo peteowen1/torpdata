@@ -84,7 +84,7 @@ jobs:
           fi
           for f in "${files[@]}"; do
             echo "Uploading $(basename $f)..."
-            if ! wrangler r2 object put "inthegame-data/$(basename $f)" --file "$f"; then
+            if ! wrangler r2 object put "inthegame-data/$(basename $f)" --file "$f" --remote; then
               echo "::error::Failed to upload $(basename $f) to R2"
               exit 1
             fi
