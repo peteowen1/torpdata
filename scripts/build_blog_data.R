@@ -1,12 +1,19 @@
 library(arrow)
 library(dplyr)
 
-# Player ratings - per-game averages
+# Player ratings - rename ppg and convert season totals to per-game rates
 season_file <- list.files("source", pattern = "^player_season_ratings_", full.names = TRUE)
 if (length(season_file) == 0) stop("No player_season_ratings file found in source/")
-season <- read_parquet(season_file[1])
+if (length(season_file) > 1) {
+  season_file <- max(season_file)
+  message("Multiple player_season_ratings files found, using: ", season_file)
+} else {
+  season_file <- season_file[1]
+}
+season <- read_parquet(season_file)
 
 ratings <- season |>
+  filter(games > 0) |>
   mutate(
     torp = ppg,
     torp_recv = season_recv / games,
@@ -19,16 +26,22 @@ ratings <- season |>
          torp_spoil, torp_hitout, gms, season) |>
   arrange(desc(torp))
 
-# Team ratings - latest season + round
+# Team ratings - most recent round of the most recent season
 teams <- read_parquet("source/team_ratings.parquet")
 latest_teams <- teams |>
   filter(season == max(season)) |>
-  filter(round == max(round))
+  filter(round == max(as.numeric(round)))
 
-# Match predictions - clean for blog display
+# Match predictions - rename columns, round values, and format for blog
 pred_file <- list.files("source", pattern = "^predictions_", full.names = TRUE)
 if (length(pred_file) == 0) stop("No predictions file found in source/")
-preds <- read_parquet(pred_file[1]) |>
+if (length(pred_file) > 1) {
+  pred_file <- max(pred_file)
+  message("Multiple predictions files found, using: ", pred_file)
+} else {
+  pred_file <- pred_file[1]
+}
+preds <- read_parquet(pred_file) |>
   ungroup() |>
   transmute(
     round = week,
@@ -43,10 +56,8 @@ preds <- read_parquet(pred_file[1]) |>
   ) |>
   arrange(round, desc(abs(pred_margin)))
 
-# Validate before writing
-stopifnot(nrow(ratings) > 0, nrow(latest_teams) > 0, nrow(preds) > 0)
+stopifnot(nrow(ratings) > 100, nrow(latest_teams) >= 18, nrow(preds) > 0)
 
-# Write all outputs
 dir.create("blog", showWarnings = FALSE)
 write_parquet(ratings, "blog/torp_ratings.parquet")
 write_parquet(latest_teams, "blog/torp_team_ratings.parquet")
