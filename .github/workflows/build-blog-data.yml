@@ -57,6 +57,25 @@ jobs:
             exit 1
           fi
 
+          # Player details (latest year for bio data)
+          if gh release download player_details-data -p "player_details_${YEAR}.parquet" -D source 2>/dev/null; then
+            echo "Downloaded player_details for ${YEAR}"
+          elif gh release download player_details-data -p "player_details_$((YEAR-1)).parquet" -D source 2>/dev/null; then
+            echo "::warning::Fell back to player_details_$((YEAR-1)).parquet"
+          else
+            echo "::error::Failed to download player_details for ${YEAR} or $((YEAR-1))"
+            exit 1
+          fi
+
+          # Per-game ratings (current + prior season for game logs)
+          for yr in ${YEAR} $((YEAR-1)); do
+            if gh release download player_game_ratings-data -p "player_game_ratings_${yr}.parquet" -D source 2>/dev/null; then
+              echo "Downloaded player_game_ratings for ${yr}"
+            else
+              echo "::warning::player_game_ratings_${yr}.parquet not available, skipping"
+            fi
+          done
+
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
 
