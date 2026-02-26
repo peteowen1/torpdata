@@ -29,3 +29,22 @@ latest_teams <- teams |>
   filter(round == max(round))
 write_parquet(latest_teams, "blog/torp_team_ratings.parquet")
 cat("torp_team_ratings:", nrow(latest_teams), "teams\n")
+
+# Match predictions - clean for blog display
+pred_file <- list.files("source", pattern = "^predictions_", full.names = TRUE)[1]
+preds <- read_parquet(pred_file) |>
+  ungroup() |>
+  transmute(
+    round = week,
+    home_team = as.character(home_team),
+    away_team = as.character(away_team),
+    home_rating = round(home_rating, 1),
+    away_rating = round(away_rating, 1),
+    pred_margin = round(pred_margin, 1),
+    home_win_prob = round(pred_win, 3),
+    pred_total = round(pred_xtotal, 0),
+    actual_margin = margin
+  ) |>
+  arrange(round, desc(abs(pred_margin)))
+write_parquet(preds, "blog/torp_predictions.parquet")
+cat("torp_predictions:", nrow(preds), "matches\n")

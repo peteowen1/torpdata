@@ -33,6 +33,8 @@ jobs:
           YEAR=$(date +%Y)
           gh release download player_season_ratings-data -p "player_season_ratings_${YEAR}.parquet" -D source || \
             gh release download player_season_ratings-data -p "player_season_ratings_$((YEAR-1)).parquet" -D source
+          gh release download predictions -p "predictions_${YEAR}.parquet" -D source || \
+            gh release download predictions -p "predictions_$((YEAR-1)).parquet" -D source
 
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
