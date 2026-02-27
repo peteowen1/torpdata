@@ -93,7 +93,7 @@ details <- read_parquet(details_file) |>
     season
   )
 
-# Game logs - per-game TORP ratings for latest 2 seasons
+# Game logs - per-game TORP ratings (up to 5 seasons, depending on source data)
 game_files <- list.files("source", pattern = "^player_game_ratings_", full.names = TRUE)
 if (length(game_files) == 0) stop("No player_game_ratings files found in source/")
 game_logs <- lapply(game_files, read_parquet) |>
