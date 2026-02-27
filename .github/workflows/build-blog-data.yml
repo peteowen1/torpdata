@@ -67,8 +67,8 @@ jobs:
             exit 1
           fi
 
-          # Per-game ratings (current + 4 prior seasons for game logs)
-          for yr in ${YEAR} $((YEAR-1)) $((YEAR-2)) $((YEAR-3)) $((YEAR-4)); do
+          # Per-game ratings (current + 5 prior seasons for game logs)
+          for yr in ${YEAR} $((YEAR-1)) $((YEAR-2)) $((YEAR-3)) $((YEAR-4)) $((YEAR-5)); do
             if gh release download player_game_ratings-data -p "player_game_ratings_${yr}.parquet" -D source 2>/dev/null; then
               echo "Downloaded player_game_ratings for ${yr}"
             else
