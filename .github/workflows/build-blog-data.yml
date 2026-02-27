@@ -67,14 +67,13 @@ jobs:
             exit 1
           fi
 
-          # Per-game ratings (current + 5 prior seasons for game logs)
-          for yr in ${YEAR} $((YEAR-1)) $((YEAR-2)) $((YEAR-3)) $((YEAR-4)) $((YEAR-5)); do
-            if gh release download player_game_ratings-data -p "player_game_ratings_${yr}.parquet" -D source 2>/dev/null; then
-              echo "Downloaded player_game_ratings for ${yr}"
-            else
-              echo "::warning::player_game_ratings_${yr}.parquet not available, skipping"
-            fi
-          done
+          # Per-game ratings (all available seasons for game logs)
+          if gh release download player_game_ratings-data -p "player_game_ratings_*.parquet" -D source 2>/dev/null; then
+            echo "Downloaded game ratings: $(ls source/player_game_ratings_*.parquet | wc -l) files"
+          else
+            echo "::error::Failed to download any player_game_ratings files"
+            exit 1
+          fi
 
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
