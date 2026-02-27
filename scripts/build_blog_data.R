@@ -32,7 +32,7 @@ latest_teams <- teams |>
   filter(season == max(season)) |>
   filter(round == max(as.numeric(round)))
 
-# Match predictions - one row per match (home perspective)
+# Match predictions - handle both processed (2026+) and raw (2025) formats
 pred_file <- list.files("source", pattern = "^predictions_", full.names = TRUE)
 if (length(pred_file) == 0) stop("No predictions file found in source/")
 if (length(pred_file) > 1) {
@@ -41,21 +41,37 @@ if (length(pred_file) > 1) {
 } else {
   pred_file <- pred_file[1]
 }
-preds <- read_parquet(pred_file) |>
-  ungroup() |>
-  filter(team_type == "home") |>
-  transmute(
-    round = round.roundNumber.x,
-    home_team = as.character(home_team),
-    away_team = as.character(away_team),
-    home_rating = round(torp.x, 1),
-    away_rating = round(torp.y, 1),
-    pred_margin = round(pred_score_diff, 1),
-    home_win_prob = round(pred_win, 3),
-    pred_total = round(pred_tot_xscore, 0),
-    actual_margin = score_diff
-  ) |>
-  arrange(round, desc(abs(pred_margin)))
+pred_raw <- read_parquet(pred_file) |> ungroup()
+
+if ("week" %in% names(pred_raw)) {
+  preds <- pred_raw |>
+    transmute(
+      round = week,
+      home_team = as.character(home_team),
+      away_team = as.character(away_team),
+      home_rating = round(home_rating, 1),
+      away_rating = round(away_rating, 1),
+      pred_margin = round(pred_margin, 1),
+      home_win_prob = round(pred_win, 3),
+      pred_total = round(pred_xtotal, 0),
+      actual_margin = margin
+    )
+} else {
+  preds <- pred_raw |>
+    filter(team_type == "home") |>
+    transmute(
+      round = round.roundNumber.x,
+      home_team = as.character(home_team),
+      away_team = as.character(away_team),
+      home_rating = round(torp.x, 1),
+      away_rating = round(torp.y, 1),
+      pred_margin = round(pred_score_diff, 1),
+      home_win_prob = round(pred_win, 3),
+      pred_total = round(pred_tot_xscore, 0),
+      actual_margin = score_diff
+    )
+}
+preds <- preds |> arrange(round, desc(abs(pred_margin)))
 
 # Player details - bio data for player profile pages
 details_file <- list.files("source", pattern = "^player_details_", full.names = TRUE)
