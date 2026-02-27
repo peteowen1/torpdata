@@ -68,8 +68,13 @@ jobs:
           fi
 
           # Per-game ratings (all available seasons for game logs)
-          if gh release download player_game_ratings-data -p "player_game_ratings_*.parquet" -D source 2>/dev/null; then
-            echo "Downloaded game ratings: $(ls source/player_game_ratings_*.parquet | wc -l) files"
+          if gh release download player_game_ratings-data -p "player_game_ratings_*.parquet" -D source; then
+            count=$(ls source/player_game_ratings_*.parquet 2>/dev/null | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "::error::gh reported success but no player_game_ratings files found on disk"
+              exit 1
+            fi
+            echo "Downloaded game ratings: ${count} files"
           else
             echo "::error::Failed to download any player_game_ratings files"
             exit 1
