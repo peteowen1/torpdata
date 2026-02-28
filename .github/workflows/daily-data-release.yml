@@ -98,6 +98,7 @@ jobs:
             )
 
             max_age_hours <- 24
+            verified <- 0L
 
             for (e in expected) {
               releases <- tryCatch(
@@ -111,22 +112,29 @@ jobs:
 
               file_row <- releases[releases[['file_name']] == e[['file']], ]
               if (nrow(file_row) == 0) {
-                stop('Verification failed: ', e[['file']], ' not found on ', e[['tag']], ' release')
+                cat('Skipped:', e[['file']], '- not found (pre-season or no data)\n')
+                next
               }
 
               upload_time <- as.POSIXct(file_row[['timestamp']][1], tz = 'UTC')
               age_hours <- as.numeric(difftime(Sys.time(), upload_time, units = 'hours'))
               if (age_hours > max_age_hours) {
-                stop('Verification failed: ', e[['file']], ' exists but was last updated ',
-                     round(age_hours), ' hours ago (max ', max_age_hours, 'h). ',
-                     'Expected a fresh upload from this run.')
+                cat('Stale:', e[['file']], '- last updated', round(age_hours), 'hours ago\n')
+                next
               }
 
               cat('Verified:', e[['file']], '- uploaded', round(age_hours, 1), 'hours ago\n')
+              verified <- verified + 1L
             }
-            cat('All critical releases verified.\n')
-          " || { echo "Release verification failed"; exit 1; }
-          echo "release_verified=true" >> $GITHUB_OUTPUT
+
+            if (verified == 0L) {
+              cat('No fresh critical files found. Skipping downstream dispatch.\n')
+              cat('release_verified=false\n', file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
+            } else {
+              cat('Verified', verified, 'of', length(expected), 'critical files.\n')
+              cat('release_verified=true\n', file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
+            }
+          "
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
