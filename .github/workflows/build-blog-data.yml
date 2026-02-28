@@ -1,13 +1,9 @@
 name: Build blog data
 
 on:
+  repository_dispatch:
+    types: [blog-trigger]
   workflow_dispatch:
-  # To trigger after the daily pipeline, uncomment and add
-  # `if: github.event.workflow_run.conclusion == 'success'` to the job
-  # (completed fires on both success and failure):
-  # workflow_run:
-  #   workflows: ["Daily Data Release"]
-  #   types: [completed]
 
 permissions:
   contents: read
