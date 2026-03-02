@@ -34,15 +34,12 @@ jobs:
             exit 1
           fi
 
-          YEAR=$(date +%Y)
-          if gh release download player_season_ratings-data -p "player_season_ratings_${YEAR}.parquet" -D source 2>/dev/null; then
-            echo "Downloaded player_season_ratings for ${YEAR}"
-          elif gh release download player_season_ratings-data -p "player_season_ratings_$((YEAR-1)).parquet" -D source 2>/dev/null; then
-            echo "::warning::Fell back to player_season_ratings_$((YEAR-1)).parquet"
-          else
-            echo "::error::Failed to download player_season_ratings for ${YEAR} or $((YEAR-1))"
+          if ! gh release download ratings-data -p "torp_ratings.parquet" -D source; then
+            echo "::error::Failed to download torp_ratings.parquet from ratings-data release"
             exit 1
           fi
+
+          YEAR=$(date +%Y)
 
           if gh release download predictions -p "predictions_${YEAR}.parquet" -D source 2>/dev/null; then
             echo "Downloaded predictions for ${YEAR}"

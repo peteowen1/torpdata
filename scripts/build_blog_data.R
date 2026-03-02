@@ -1,27 +1,12 @@
 library(arrow)
 library(dplyr)
 
-# Player ratings - rename ppg and convert season totals to per-game rates
-season_file <- list.files("source", pattern = "^player_season_ratings_", full.names = TRUE)
-if (length(season_file) == 0) stop("No player_season_ratings file found in source/")
-if (length(season_file) > 1) {
-  season_file <- max(season_file)
-  message("Multiple player_season_ratings files found, using: ", season_file)
-} else {
-  season_file <- season_file[1]
-}
-season <- read_parquet(season_file)
+# Player ratings - predictive TORP ratings (career-weighted with exponential decay)
+all_ratings <- read_parquet("source/torp_ratings.parquet")
 
-ratings <- season |>
-  filter(games > 0) |>
-  mutate(
-    torp = ppg,
-    torp_recv = season_recv / games,
-    torp_disp = season_disp / games,
-    torp_spoil = season_spoil / games,
-    torp_hitout = season_hitout / games,
-    gms = games
-  ) |>
+ratings <- all_ratings |>
+  filter(season == max(season)) |>
+  filter(round == max(round)) |>
   select(player_id, player_name, team, position, torp, torp_recv, torp_disp,
          torp_spoil, torp_hitout, gms, season) |>
   arrange(desc(torp))
