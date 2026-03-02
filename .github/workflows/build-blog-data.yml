@@ -41,12 +41,16 @@ jobs:
 
           YEAR=$(date +%Y)
 
-          if gh release download predictions -p "predictions_${YEAR}.parquet" -D source 2>/dev/null; then
-            echo "Downloaded predictions for ${YEAR}"
-          elif gh release download predictions -p "predictions_$((YEAR-1)).parquet" -D source 2>/dev/null; then
-            echo "::warning::Fell back to predictions_$((YEAR-1)).parquet"
+          # Predictions (all available seasons)
+          if gh release download predictions -p "predictions_*.parquet" -D source; then
+            count=$(ls source/predictions_*.parquet 2>/dev/null | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "::error::gh reported success but no predictions files found on disk"
+              exit 1
+            fi
+            echo "Downloaded predictions: ${count} files"
           else
-            echo "::error::Failed to download predictions for ${YEAR} or $((YEAR-1))"
+            echo "::error::Failed to download any predictions files"
             exit 1
           fi
 
