@@ -38,8 +38,8 @@ preds_list <- lapply(pred_files, function(f) {
         home_win_prob = round(pred_win, 3),
         pred_total = round(pred_xtotal, 0),
         actual_margin = margin,
-        start_time = start_time,
-        venue = as.character(venue)
+        start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
+        venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_
       )
   } else {
     pred_raw |>
