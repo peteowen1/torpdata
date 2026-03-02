@@ -1,27 +1,12 @@
 library(arrow)
 library(dplyr)
 
-# Player ratings - rename ppg and convert season totals to per-game rates
-season_file <- list.files("source", pattern = "^player_season_ratings_", full.names = TRUE)
-if (length(season_file) == 0) stop("No player_season_ratings file found in source/")
-if (length(season_file) > 1) {
-  season_file <- max(season_file)
-  message("Multiple player_season_ratings files found, using: ", season_file)
-} else {
-  season_file <- season_file[1]
-}
-season <- read_parquet(season_file)
+# Player ratings - predictive TORP ratings (career-weighted with exponential decay)
+all_ratings <- read_parquet("source/torp_ratings.parquet")
 
-ratings <- season |>
-  filter(games > 0) |>
-  mutate(
-    torp = ppg,
-    torp_recv = season_recv / games,
-    torp_disp = season_disp / games,
-    torp_spoil = season_spoil / games,
-    torp_hitout = season_hitout / games,
-    gms = games
-  ) |>
+ratings <- all_ratings |>
+  filter(season == max(season)) |>
+  filter(round == max(round)) |>
   select(player_id, player_name, team, position, torp, torp_recv, torp_disp,
          torp_spoil, torp_hitout, gms, season) |>
   arrange(desc(torp))
@@ -32,46 +17,48 @@ latest_teams <- teams |>
   filter(season == max(season)) |>
   filter(round == max(as.numeric(round)))
 
-# Match predictions - handle both processed (2026+) and raw (2025) formats
-pred_file <- list.files("source", pattern = "^predictions_", full.names = TRUE)
-if (length(pred_file) == 0) stop("No predictions file found in source/")
-if (length(pred_file) > 1) {
-  pred_file <- max(pred_file)
-  message("Multiple predictions files found, using: ", pred_file)
-} else {
-  pred_file <- pred_file[1]
-}
-pred_raw <- read_parquet(pred_file) |> ungroup()
+# Match predictions - all seasons, handle both processed (2026+) and raw (2025) formats
+pred_files <- list.files("source", pattern = "^predictions_", full.names = TRUE)
+if (length(pred_files) == 0) stop("No predictions files found in source/")
 
-if ("week" %in% names(pred_raw)) {
-  preds <- pred_raw |>
-    transmute(
-      round = week,
-      home_team = as.character(home_team),
-      away_team = as.character(away_team),
-      home_rating = round(home_rating, 1),
-      away_rating = round(away_rating, 1),
-      pred_margin = round(pred_margin, 1),
-      home_win_prob = round(pred_win, 3),
-      pred_total = round(pred_xtotal, 0),
-      actual_margin = margin
-    )
-} else {
-  preds <- pred_raw |>
-    filter(team_type == "home") |>
-    transmute(
-      round = round.roundNumber.x,
-      home_team = as.character(home_team),
-      away_team = as.character(away_team),
-      home_rating = round(torp.x, 1),
-      away_rating = round(torp.y, 1),
-      pred_margin = round(pred_score_diff, 1),
-      home_win_prob = round(pred_win, 3),
-      pred_total = round(pred_tot_xscore, 0),
-      actual_margin = score_diff
-    )
-}
-preds <- preds |> arrange(round, desc(abs(pred_margin)))
+preds_list <- lapply(pred_files, function(f) {
+  season <- as.integer(sub(".*predictions_(\\d+)\\.parquet$", "\\1", basename(f)))
+  pred_raw <- read_parquet(f) |> ungroup()
+
+  if ("week" %in% names(pred_raw)) {
+    pred_raw |>
+      transmute(
+        season = !!season,
+        round = week,
+        home_team = as.character(home_team),
+        away_team = as.character(away_team),
+        home_rating = round(home_rating, 1),
+        away_rating = round(away_rating, 1),
+        pred_margin = round(pred_margin, 1),
+        home_win_prob = round(pred_win, 3),
+        pred_total = round(pred_xtotal, 0),
+        actual_margin = margin,
+        start_time = start_time,
+        venue = as.character(venue)
+      )
+  } else {
+    pred_raw |>
+      filter(team_type == "home") |>
+      transmute(
+        season = !!season,
+        round = round.roundNumber.x,
+        home_team = as.character(home_team),
+        away_team = as.character(away_team),
+        home_rating = round(torp.x, 1),
+        away_rating = round(torp.y, 1),
+        pred_margin = round(pred_score_diff, 1),
+        home_win_prob = round(pred_win, 3),
+        pred_total = round(pred_tot_xscore, 0),
+        actual_margin = score_diff
+      )
+  }
+})
+preds <- bind_rows(preds_list) |> arrange(season, round, desc(abs(pred_margin)))
 
 # Player details - bio data for player profile pages
 details_file <- list.files("source", pattern = "^player_details_", full.names = TRUE)
