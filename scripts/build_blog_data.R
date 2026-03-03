@@ -17,46 +17,48 @@ latest_teams <- teams |>
   filter(season == max(season)) |>
   filter(round == max(as.numeric(round)))
 
-# Match predictions - handle both processed (2026+) and raw (2025) formats
-pred_file <- list.files("source", pattern = "^predictions_", full.names = TRUE)
-if (length(pred_file) == 0) stop("No predictions file found in source/")
-if (length(pred_file) > 1) {
-  pred_file <- max(pred_file)
-  message("Multiple predictions files found, using: ", pred_file)
-} else {
-  pred_file <- pred_file[1]
-}
-pred_raw <- read_parquet(pred_file) |> ungroup()
+# Match predictions - all seasons, handle both processed (2026+) and raw (2025) formats
+pred_files <- list.files("source", pattern = "^predictions_", full.names = TRUE)
+if (length(pred_files) == 0) stop("No predictions files found in source/")
 
-if ("week" %in% names(pred_raw)) {
-  preds <- pred_raw |>
-    transmute(
-      round = week,
-      home_team = as.character(home_team),
-      away_team = as.character(away_team),
-      home_rating = round(home_rating, 1),
-      away_rating = round(away_rating, 1),
-      pred_margin = round(pred_margin, 1),
-      home_win_prob = round(pred_win, 3),
-      pred_total = round(pred_xtotal, 0),
-      actual_margin = margin
-    )
-} else {
-  preds <- pred_raw |>
-    filter(team_type == "home") |>
-    transmute(
-      round = round.roundNumber.x,
-      home_team = as.character(home_team),
-      away_team = as.character(away_team),
-      home_rating = round(torp.x, 1),
-      away_rating = round(torp.y, 1),
-      pred_margin = round(pred_score_diff, 1),
-      home_win_prob = round(pred_win, 3),
-      pred_total = round(pred_tot_xscore, 0),
-      actual_margin = score_diff
-    )
-}
-preds <- preds |> arrange(round, desc(abs(pred_margin)))
+preds_list <- lapply(pred_files, function(f) {
+  season <- as.integer(sub(".*predictions_(\\d+)\\.parquet$", "\\1", basename(f)))
+  pred_raw <- read_parquet(f) |> ungroup()
+
+  if ("week" %in% names(pred_raw)) {
+    pred_raw |>
+      transmute(
+        season = !!season,
+        round = week,
+        home_team = as.character(home_team),
+        away_team = as.character(away_team),
+        home_rating = round(home_rating, 1),
+        away_rating = round(away_rating, 1),
+        pred_margin = round(pred_margin, 1),
+        home_win_prob = round(pred_win, 3),
+        pred_total = round(pred_xtotal, 0),
+        actual_margin = margin,
+        start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
+        venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_
+      )
+  } else {
+    pred_raw |>
+      filter(team_type == "home") |>
+      transmute(
+        season = !!season,
+        round = round.roundNumber.x,
+        home_team = as.character(home_team),
+        away_team = as.character(away_team),
+        home_rating = round(torp.x, 1),
+        away_rating = round(torp.y, 1),
+        pred_margin = round(pred_score_diff, 1),
+        home_win_prob = round(pred_win, 3),
+        pred_total = round(pred_tot_xscore, 0),
+        actual_margin = score_diff
+      )
+  }
+})
+preds <- bind_rows(preds_list) |> arrange(season, round, desc(abs(pred_margin)))
 
 # Player details - bio data for player profile pages
 details_file <- list.files("source", pattern = "^player_details_", full.names = TRUE)
@@ -113,3 +115,110 @@ cat("torp_team_ratings:", nrow(latest_teams), "teams\n")
 cat("torp_predictions:", nrow(preds), "matches\n")
 cat("torp_player_details:", nrow(details), "players\n")
 cat("torp_game_logs:", nrow(game_logs), "game records\n")
+
+# Season simulations — Monte Carlo projections (depends on torp package)
+# Wrapped in tryCatch so simulation failure doesn't block the core parquets
+tryCatch({
+  torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
+  if (is.null(torp_path)) stop("torp package not found at ../torp or ./torp")
+  devtools::load_all(torp_path, quiet = TRUE)
+  library(data.table)
+
+  current_season <- max(preds$season)
+  played <- preds$round[preds$season == current_season & !is.na(preds$actual_margin)]
+  latest_round <- if (length(played) > 0) max(played) else 0L
+
+  cat("Running", 3000, "season simulations for", current_season,
+      "from round", latest_round, "...\n")
+
+  sim_results <- simulate_afl_season(current_season, n_sims = 3000,
+                                     seed = 42, verbose = FALSE)
+  summary_dt <- summarise_simulations(sim_results)
+  n_sims_val <- sim_results$n_sims
+
+  # Finals stage probabilities from raw finals data
+  finals <- sim_results$finals
+  finals_stage <- finals[, .(
+    premiers_pct    = sum(finals_finish == 5) / n_sims_val,
+    runner_up_pct   = sum(finals_finish == 4) / n_sims_val,
+    lose_prelim_pct = sum(finals_finish == 3) / n_sims_val,
+    lose_semi_pct   = sum(finals_finish == 2) / n_sims_val,
+    lose_elim_pct   = sum(finals_finish == 1) / n_sims_val
+  ), by = team]
+
+  # Position distribution from ladder results
+  ladders <- sim_results$ladders
+  pos_counts <- ladders[, .N, by = .(team, rank)]
+  pos_dist <- dcast(pos_counts, team ~ rank, value.var = "N", fill = 0)
+  pos_cols <- as.character(1:18)
+  for (col in pos_cols) {
+    if (!col %in% names(pos_dist)) pos_dist[, (col) := 0]
+    set(pos_dist, j = col, value = pos_dist[[col]] / n_sims_val)
+  }
+  setnames(pos_dist, pos_cols, paste0("pos_", pos_cols, "_pct"))
+
+  # Normalize sim team names (short) → full AFL names (matching torp_ratings.parquet)
+  full_names <- c(
+    Adelaide = "Adelaide Crows", `Brisbane Lions` = "Brisbane Lions",
+    Carlton = "Carlton", Collingwood = "Collingwood", Essendon = "Essendon",
+    Fremantle = "Fremantle", Geelong = "Geelong Cats",
+    `Gold Coast` = "Gold Coast SUNS", GWS = "GWS GIANTS",
+    Hawthorn = "Hawthorn", Melbourne = "Melbourne",
+    `North Melbourne` = "North Melbourne", `Port Adelaide` = "Port Adelaide",
+    Richmond = "Richmond", `St Kilda` = "St Kilda",
+    Sydney = "Sydney Swans", `West Coast` = "West Coast Eagles",
+    Footscray = "Western Bulldogs"
+  )
+  norm_team <- function(x) {
+    mapped <- full_names[x]
+    ifelse(is.na(mapped), x, mapped)
+  }
+  summary_dt[, team := norm_team(team)]
+  finals_stage[, team := norm_team(team)]
+  pos_dist[, team := norm_team(team)]
+
+  # Current standings from fitzRoy (pre-season = zeros)
+  current <- tryCatch({
+    ladder <- fitzRoy::fetch_ladder(current_season, source = "AFL")
+    latest_rnd <- max(ladder$round_number)
+    ladder <- ladder[ladder$round_number == latest_rnd, ]
+    data.table(
+      team = ladder$team.name,
+      current_wins = as.integer(ladder$thisSeasonRecord.winLossRecord.wins),
+      current_losses = as.integer(ladder$thisSeasonRecord.winLossRecord.losses),
+      current_pct = round(ladder$thisSeasonRecord.percentage, 1)
+    )
+  }, error = function(e) {
+    cat("Note: Could not fetch current ladder, using zeros\n")
+    data.table(team = summary_dt$team, current_wins = 0L,
+               current_losses = 0L, current_pct = NA_real_)
+  })
+
+  # Merge summary + current standings + finals stages + position distribution
+  sim_output <- merge(
+    summary_dt[, .(team, avg_wins, avg_losses, avg_percentage, avg_rank,
+                   top_1_pct, top_4_pct, top_8_pct, last_pct)],
+    current, by = "team", all.x = TRUE
+  )
+  sim_output <- merge(sim_output, finals_stage, by = "team", all.x = TRUE)
+  sim_output <- merge(sim_output, pos_dist, by = "team", all.x = TRUE)
+
+  # Fill NAs with 0 for teams that never made finals / pre-season
+  pct_cols <- grep("_pct$", names(sim_output), value = TRUE)
+  pct_cols <- setdiff(pct_cols, c("avg_percentage", "current_pct"))
+  for (col in pct_cols) {
+    set(sim_output, which(is.na(sim_output[[col]])), col, 0)
+  }
+  set(sim_output, which(is.na(sim_output[["current_wins"]])), "current_wins", 0L)
+  set(sim_output, which(is.na(sim_output[["current_losses"]])), "current_losses", 0L)
+
+  sim_output[, season := current_season]
+  sim_output[, round := latest_round]
+  sim_output[, n_sims := n_sims_val]
+
+  write_parquet(as.data.frame(sim_output), "blog/torp_simulations.parquet")
+  cat("torp_simulations:", nrow(sim_output), "teams\n")
+}, error = function(e) {
+  cat("WARNING: Simulation failed, skipping torp_simulations.parquet:",
+      conditionMessage(e), "\n")
+})
