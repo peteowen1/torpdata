@@ -73,10 +73,14 @@ jobs:
             source('data-raw/01-data/daily_release.R')
             force <- as.logical(Sys.getenv('FORCE_RELEASE', 'FALSE'))
             result <- run_daily_release(force = force)
-            if (!is.logical(result) || length(result) != 1) {
-              stop('run_daily_release() returned unexpected type: ', class(result))
+            if (!is.character(result) || length(result) != 1 ||
+                !result %in% c('full', 'team_only', 'none')) {
+              stop('run_daily_release() returned unexpected value: ', result)
             }
-            cat(paste0('release_done=', tolower(result), '\n'),
+            release_done <- result != 'none'
+            cat(paste0('release_done=', tolower(release_done), '\n'),
+                file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
+            cat(paste0('release_mode=', result, '\n'),
                 file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
           "
         env:
@@ -90,12 +94,21 @@ jobs:
         run: |
           Rscript -e "
             season <- as.integer(format(Sys.Date(), '%Y'))
+            release_mode <- '${{ steps.daily_release.outputs.release_mode }}'
 
-            expected <- list(
-              list(file = paste0('pbp_data_', season, '_all.parquet'),    tag = 'pbp-data'),
-              list(file = paste0('chains_data_', season, '_all.parquet'), tag = 'chains-data'),
-              list(file = paste0('player_stats_', season, '.parquet'),    tag = 'player_stats-data')
-            )
+            if (release_mode == 'team_only') {
+              expected <- list(
+                list(file = paste0('teams_', season, '.parquet'), tag = 'teams-data')
+              )
+            } else {
+              expected <- list(
+                list(file = paste0('pbp_data_', season, '_all.parquet'),    tag = 'pbp-data'),
+                list(file = paste0('chains_data_', season, '_all.parquet'), tag = 'chains-data'),
+                list(file = paste0('player_stats_', season, '.parquet'),    tag = 'player_stats-data')
+              )
+            }
+
+            cat('Release mode:', release_mode, '\n')
 
             max_age_hours <- 24
             verified <- 0L
@@ -162,7 +175,7 @@ jobs:
           token: ${{ secrets.WORKFLOW_PAT }}
           repository: peteowen1/torp
           event-type: ratings-trigger
-          client-payload: '{"season": "${{ steps.release_info.outputs.afl_season }}", "round": "${{ steps.release_info.outputs.afl_round }}"}'
+          client-payload: '{"season": "${{ steps.release_info.outputs.afl_season }}", "round": "${{ steps.release_info.outputs.afl_round }}", "release_mode": "${{ steps.daily_release.outputs.release_mode }}"}'
 
       - name: Create release summary
         if: steps.daily_release.outputs.release_done == 'true'
@@ -205,7 +218,7 @@ jobs:
             echo ""
             echo "**Date:** $(date +'%Y-%m-%d %H:%M UTC')"
             echo ""
-            echo "No new games detected. Release skipped."
+            echo "No new games or lineup changes detected. Release skipped."
             echo "This is expected during the off-season or between rounds."
           } >> $GITHUB_STEP_SUMMARY
 
