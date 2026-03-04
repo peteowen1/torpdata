@@ -90,66 +90,61 @@ jobs:
       - name: Verify release uploads
         if: steps.daily_release.outputs.release_done == 'true'
         id: verify_release
-        working-directory: torp
         run: |
-          Rscript -e "
-            season <- as.integer(format(Sys.Date(), '%Y'))
-            release_mode <- '${{ steps.daily_release.outputs.release_mode }}'
+          SEASON=$(date +%Y)
+          RELEASE_MODE="${{ steps.daily_release.outputs.release_mode }}"
+          MAX_AGE_HOURS=24
 
-            if (release_mode == 'team_only') {
-              expected <- list(
-                list(file = paste0('teams_', season, '.parquet'), tag = 'teams-data')
-              )
-            } else {
-              expected <- list(
-                list(file = paste0('pbp_data_', season, '_all.parquet'),    tag = 'pbp-data'),
-                list(file = paste0('chains_data_', season, '_all.parquet'), tag = 'chains-data'),
-                list(file = paste0('player_stats_', season, '.parquet'),    tag = 'player_stats-data')
-              )
-            }
+          echo "Release mode: $RELEASE_MODE"
 
-            cat('Release mode:', release_mode, '\n')
+          if [ "$RELEASE_MODE" = "team_only" ]; then
+            FILES="teams-data:teams_${SEASON}.parquet"
+          else
+            FILES="pbp-data:pbp_data_${SEASON}_all.parquet chains-data:chains_data_${SEASON}_all.parquet player_stats-data:player_stats_${SEASON}.parquet"
+          fi
 
-            max_age_hours <- 24
-            verified <- 0L
+          verified=0
+          total=0
 
-            for (e in expected) {
-              releases <- tryCatch(
-                piggyback::pb_list(repo = 'peteowen1/torpdata', tag = e[['tag']]),
-                error = function(err) {
-                  stop('GitHub API error querying ', e[['tag']], ' release. ',
-                       'This may be transient -- re-run the workflow. ',
-                       'Original error: ', conditionMessage(err))
-                }
-              )
+          for entry in $FILES; do
+            tag="${entry%%:*}"
+            file="${entry##*:}"
+            total=$((total + 1))
 
-              file_row <- releases[releases[['file_name']] == e[['file']], ]
-              if (nrow(file_row) == 0) {
-                cat('Skipped:', e[['file']], '- not found (pre-season or no data)\n')
-                next
-              }
+            # Query asset updated_at via gh release view
+            updated_at=$(gh release view "$tag" \
+              --repo peteowen1/torpdata \
+              --json assets \
+              --jq ".assets[] | select(.name == \"$file\") | .updatedAt" 2>/dev/null || true)
 
-              upload_time <- as.POSIXct(file_row[['timestamp']][1], tz = 'UTC')
-              age_hours <- as.numeric(difftime(Sys.time(), upload_time, units = 'hours'))
-              if (age_hours > max_age_hours) {
-                cat('Stale:', e[['file']], '- last updated', round(age_hours), 'hours ago\n')
-                next
-              }
+            if [ -z "$updated_at" ]; then
+              echo "Skipped: $file - not found in $tag release (pre-season or no data)"
+              continue
+            fi
 
-              cat('Verified:', e[['file']], '- uploaded', round(age_hours, 1), 'hours ago\n')
-              verified <- verified + 1L
-            }
+            # Check freshness
+            upload_epoch=$(date -d "$updated_at" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s 2>/dev/null)
+            now_epoch=$(date +%s)
+            age_hours=$(( (now_epoch - upload_epoch) / 3600 ))
 
-            if (verified == 0L) {
-              cat('No fresh critical files found. Skipping downstream dispatch.\n')
-              cat('release_verified=false\n', file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
-            } else {
-              cat('Verified', verified, 'of', length(expected), 'critical files.\n')
-              cat('release_verified=true\n', file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
-            }
-          "
+            if [ "$age_hours" -gt "$MAX_AGE_HOURS" ]; then
+              echo "Stale: $file - last updated ${age_hours}h ago"
+              continue
+            fi
+
+            echo "Verified: $file - uploaded ${age_hours}h ago"
+            verified=$((verified + 1))
+          done
+
+          if [ "$verified" -eq 0 ]; then
+            echo "No fresh critical files found. Skipping downstream dispatch."
+            echo "release_verified=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Verified $verified of $total critical files."
+            echo "release_verified=true" >> "$GITHUB_OUTPUT"
+          fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Rebuild historical aggregates
         if: inputs.rebuild_aggregates && steps.daily_release.outcome == 'success'
