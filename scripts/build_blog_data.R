@@ -101,6 +101,44 @@ game_logs <- lapply(game_files, read_parquet) |>
   ) |>
   arrange(player_id, season, round)
 
+# Shot data from PBP — wrapped in tryCatch so missing PBP doesn't block core build
+shots <- tryCatch({
+  pbp_files <- list.files("source", pattern = "^pbp_data_\\d{4}_all\\.parquet$", full.names = TRUE)
+  if (length(pbp_files) == 0) stop("No PBP files found in source/")
+
+  pbp <- lapply(pbp_files, function(f) {
+    read_parquet(f, col_select = c(
+      "player_id", "season", "round_number", "x", "y", "distance",
+      "goal_prob", "points_shot", "phase_of_play", "venue_length", "venue_width",
+      "shot_at_goal"
+    ))
+  }) |> bind_rows()
+
+  pbp |>
+    filter(shot_at_goal == TRUE) |>
+    transmute(
+      player_id,
+      season = as.integer(season),
+      round_number = as.integer(round_number),
+      x = round(x, 1),
+      y = round(y, 1),
+      distance = round(distance, 1),
+      goal_prob = round(goal_prob, 3),
+      shot_result = case_when(
+        points_shot == 6 ~ 1L,    # goal
+        points_shot == 1 ~ 0L,    # behind
+        TRUE             ~ -1L    # miss
+      ),
+      phase_of_play = as.character(phase_of_play),
+      venue_length = coalesce(as.integer(venue_length), 165L),
+      venue_width  = coalesce(as.integer(venue_width), 135L)
+    )
+}, error = function(e) {
+  cat("WARNING: Shot data extraction failed, skipping torp_shots.parquet:",
+      conditionMessage(e), "\n")
+  NULL
+})
+
 stopifnot(nrow(ratings) > 100, nrow(latest_teams) >= 18, nrow(preds) > 0)
 stopifnot(nrow(details) > 0, nrow(game_logs) > 0)
 
@@ -115,6 +153,10 @@ cat("torp_team_ratings:", nrow(latest_teams), "teams\n")
 cat("torp_predictions:", nrow(preds), "matches\n")
 cat("torp_player_details:", nrow(details), "players\n")
 cat("torp_game_logs:", nrow(game_logs), "game records\n")
+if (!is.null(shots)) {
+  write_parquet(shots, "blog/torp_shots.parquet")
+  cat("torp_shots:", nrow(shots), "shots\n")
+}
 
 # Season simulations — Monte Carlo projections (depends on torp package)
 # Wrapped in tryCatch so simulation failure doesn't block the core parquets
