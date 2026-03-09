@@ -1,6 +1,5 @@
 # R files
 .Rproj.user
-*.Rproj
 .Rhistory
 .RData
 .Ruserdata
