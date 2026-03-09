@@ -16,7 +16,7 @@ message("Max round: ", max(season_df$round))
 
 ratings <- all_ratings |>
   filter(season == max(season)) |>
-  filter(round == max(round)) |>
+  filter(round == max(round, na.rm = TRUE)) |>
   select(player_id, player_name, team, position, torp, torp_recv, torp_disp,
          torp_spoil, torp_hitout, gms, season) |>
   arrange(desc(torp))
@@ -26,7 +26,7 @@ message("Filtered ratings rows: ", nrow(ratings))
 teams <- read_parquet("source/team_ratings.parquet")
 latest_teams <- teams |>
   filter(season == max(season)) |>
-  filter(round == max(as.numeric(round)))
+  filter(round == max(as.numeric(round), na.rm = TRUE))
 
 # Match predictions - all seasons, handle both processed (2026+) and raw (2025) formats
 pred_files <- list.files("source", pattern = "^predictions_", full.names = TRUE)
