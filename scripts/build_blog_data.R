@@ -191,6 +191,58 @@ shots <- if (length(pbp_files) == 0) {
   })
 }
 
+# Match events from PBP — per-season event-level EPV data for match-events page
+# Optional: uses same pbp_files as shots
+if (length(pbp_files) > 0) {
+  tryCatch({
+    event_cols <- c("player_id", "season", "round_number", "period",
+                    "period_seconds", "play_type", "phase_of_play",
+                    "description", "disposal", "delta_epv", "scored_shot")
+
+    for (pbp_file in pbp_files) {
+      pbp_season <- as.integer(sub(".*pbp_data_(\\d{4})_all\\.parquet$", "\\1", basename(pbp_file)))
+      pbp <- read_parquet(pbp_file, col_select = any_of(event_cols))
+
+      events <- pbp |>
+        filter(!is.na(player_id)) |>
+        mutate(
+          category = case_when(
+            play_type == "Reception" ~ "Ball Winning",
+            disposal == "clanger" ~ "Negatives",
+            play_type %in% c("Kick", "Handball", "Ground Kick") ~ "Ball Use",
+            TRUE ~ NA_character_
+          ),
+          role = if_else(play_type == "Reception", "receiver", "disposer"),
+          detail = description,
+          quarter = period,
+          time = period_seconds,
+          round = round_number,
+          equity = delta_epv,
+          is_contested = phase_of_play == "Hard Ball",
+          is_ineffective = !is.na(disposal) & disposal == "ineffective",
+          is_goal = !is.na(scored_shot) & scored_shot == 1,
+          is_free_against = FALSE
+        ) |>
+        filter(!is.na(category)) |>
+        arrange(player_id, round, quarter, time) |>
+        group_by(player_id, round) |>
+        mutate(cumulative_total = cumsum(equity)) |>
+        ungroup() |>
+        select(player_id, season, round, quarter, time,
+               category, detail, equity, cumulative_total,
+               is_contested, is_ineffective, is_goal, is_free_against, role)
+
+      out_name <- paste0("torp_match_events_", pbp_season, ".parquet")
+      write_parquet(events, file.path("blog", out_name))
+      cat(out_name, ":", nrow(events), "events\n")
+    }
+  }, error = function(e) {
+    message("::warning::Match events processing failed: ", conditionMessage(e))
+  })
+} else {
+  message("INFO: No PBP files — skipping match events")
+}
+
 if (nrow(ratings) <= 100)   stop("ratings has ", nrow(ratings), " rows (expected >100)")
 if (nrow(latest_teams) < 18) stop("latest_teams has ", nrow(latest_teams), " rows (expected >=18)")
 if (nrow(preds) == 0)        stop("preds is empty — no predictions loaded")
