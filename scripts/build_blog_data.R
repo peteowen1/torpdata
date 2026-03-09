@@ -65,10 +65,22 @@ details_file <- list.files("source", pattern = "^player_details_", full.names = 
 if (length(details_file) == 0) stop("No player_details file found in source/")
 details_file <- max(details_file)
 details_raw <- read_parquet(details_file)
-# Standardise column names — AFL API may nest under 'player.'
+# Standardise column names — strip 'player.' prefix from flattened AFL API response.
+# Defensive shim for parquets uploaded before get_afl_player_details() was fixed;
+# new parquets already have clean names so this is a no-op for them.
 names(details_raw) <- sub("^player\\.", "", names(details_raw))
 if ("team.name" %in% names(details_raw) && !"team" %in% names(details_raw)) {
   names(details_raw)[names(details_raw) == "team.name"] <- "team"
+}
+required_detail_cols <- c("providerId", "player_name", "team", "position",
+                          "jumperNumber", "heightInCm", "weightInKg",
+                          "dateOfBirth", "draftYear", "debutYear",
+                          "recruitedFrom", "season")
+missing_detail_cols <- setdiff(required_detail_cols, names(details_raw))
+if (length(missing_detail_cols) > 0) {
+  stop("player_details parquet missing columns after name standardisation: ",
+       paste(missing_detail_cols, collapse = ", "),
+       "\nActual columns: ", paste(names(details_raw), collapse = ", "))
 }
 details <- details_raw |>
   transmute(
@@ -107,19 +119,30 @@ game_logs <- lapply(game_files, read_parquet) |>
   ) |>
   arrange(player_id, season, round)
 
-# Shot data from PBP — wrapped in tryCatch so missing PBP doesn't block core build
-shots <- tryCatch({
-  pbp_files <- list.files("source", pattern = "^pbp_data_\\d{4}_all\\.parquet$", full.names = TRUE)
-  if (length(pbp_files) == 0) stop("No PBP files found in source/")
+# Shot data from PBP — optional, skipped if PBP files absent
+# Standard AFL field dimensions (metres) — canonical values in torp/R/constants.R
+DEFAULT_VENUE_LENGTH <- 165L
+DEFAULT_VENUE_WIDTH  <- 135L
+
+pbp_files <- list.files("source", pattern = "^pbp_data_\\d{4}_all\\.parquet$", full.names = TRUE)
+shots <- if (length(pbp_files) == 0) {
+  message("INFO: No PBP files in source/ — skipping torp_shots.parquet")
+  NULL
+} else {
+  shot_cols <- c("player_id", "season", "round_number", "x", "y", "distance",
+                 "goal_prob", "points_shot", "phase_of_play", "venue_length",
+                 "venue_width", "shot_at_goal")
 
   pbp <- lapply(pbp_files, function(f) {
-    read_parquet(f, col_select = c(
-      "player_id", "season", "round_number", "x", "y", "distance",
-      "goal_prob", "points_shot", "phase_of_play", "venue_length", "venue_width",
-      "shot_at_goal"
-    ))
+    df <- read_parquet(f)
+    missing <- setdiff(shot_cols, names(df))
+    if (length(missing) > 0) {
+      stop("PBP file ", basename(f), " missing columns: ", paste(missing, collapse = ", "))
+    }
+    df[, shot_cols]
   }) |> bind_rows()
 
+  # Encode shot outcome: 1 = goal (6 pts), 0 = behind (1 pt), -1 = miss (0 pts)
   pbp |>
     filter(shot_at_goal == TRUE) |>
     transmute(
@@ -131,19 +154,15 @@ shots <- tryCatch({
       distance = round(distance, 1),
       goal_prob = round(goal_prob, 3),
       shot_result = case_when(
-        points_shot == 6 ~ 1L,    # goal
-        points_shot == 1 ~ 0L,    # behind
-        TRUE             ~ -1L    # miss
+        points_shot == 6 ~ 1L,
+        points_shot == 1 ~ 0L,
+        TRUE             ~ -1L
       ),
       phase_of_play = as.character(phase_of_play),
-      venue_length = coalesce(as.integer(venue_length), 165L),
-      venue_width  = coalesce(as.integer(venue_width), 135L)
+      venue_length = coalesce(as.integer(venue_length), DEFAULT_VENUE_LENGTH),
+      venue_width  = coalesce(as.integer(venue_width), DEFAULT_VENUE_WIDTH)
     )
-}, error = function(e) {
-  cat("WARNING: Shot data extraction failed, skipping torp_shots.parquet:",
-      conditionMessage(e), "\n")
-  NULL
-})
+}
 
 stopifnot(nrow(ratings) > 100, nrow(latest_teams) >= 18, nrow(preds) > 0)
 stopifnot(nrow(details) > 0, nrow(game_logs) > 0)
@@ -237,7 +256,7 @@ tryCatch({
       current_pct = round(ladder$thisSeasonRecord.percentage, 1)
     )
   }, error = function(e) {
-    cat("Note: Could not fetch current ladder, using zeros\n")
+    message("::warning::Could not fetch current ladder (using zeros): ", conditionMessage(e))
     data.table(team = summary_dt$team, current_wins = 0L,
                current_losses = 0L, current_pct = NA_real_)
   })
@@ -267,6 +286,6 @@ tryCatch({
   write_parquet(as.data.frame(sim_output), "blog/torp_simulations.parquet")
   cat("torp_simulations:", nrow(sim_output), "teams\n")
 }, error = function(e) {
-  cat("WARNING: Simulation failed, skipping torp_simulations.parquet:",
-      conditionMessage(e), "\n")
+  message("::warning::Simulation failed, skipping torp_simulations.parquet: ",
+          conditionMessage(e))
 })
