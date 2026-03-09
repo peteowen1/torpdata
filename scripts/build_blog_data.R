@@ -5,8 +5,8 @@ library(dplyr)
 all_ratings <- read_parquet("source/torp_ratings.parquet")
 
 ratings <- all_ratings |>
-  filter(season == max(season)) |>
-  filter(round == max(round)) |>
+  filter(season == max(season, na.rm = TRUE)) |>
+  filter(round == max(round, na.rm = TRUE)) |>
   select(player_id, player_name, team, position, torp, torp_recv, torp_disp,
          torp_spoil, torp_hitout, gms, season) |>
   arrange(desc(torp))
@@ -14,8 +14,8 @@ ratings <- all_ratings |>
 # Team ratings - most recent round of the most recent season
 teams <- read_parquet("source/team_ratings.parquet")
 latest_teams <- teams |>
-  filter(season == max(season)) |>
-  filter(round == max(as.numeric(round)))
+  filter(season == max(season, na.rm = TRUE)) |>
+  filter(round == max(as.numeric(round), na.rm = TRUE))
 
 # Match predictions - all seasons, handle both processed (2026+) and raw (2025) formats
 pred_files <- list.files("source", pattern = "^predictions_", full.names = TRUE)
@@ -64,7 +64,34 @@ preds <- bind_rows(preds_list) |> arrange(season, round, desc(abs(pred_margin)))
 details_file <- list.files("source", pattern = "^player_details_", full.names = TRUE)
 if (length(details_file) == 0) stop("No player_details file found in source/")
 details_file <- max(details_file)
-details <- read_parquet(details_file) |>
+details_raw <- read_parquet(details_file)
+# Standardise column names — strip 'player.' prefix from flattened AFL API response.
+# Defensive shim for parquets uploaded before get_afl_player_details() was fixed;
+# new parquets already have clean names so this is a no-op for them.
+names(details_raw) <- sub("^player\\.", "", names(details_raw))
+if ("team.name" %in% names(details_raw) && !"team" %in% names(details_raw)) {
+  names(details_raw)[names(details_raw) == "team.name"] <- "team"
+}
+required_detail_cols <- c("providerId", "player_name", "team", "position",
+                          "jumperNumber", "heightInCm", "weightInKg",
+                          "dateOfBirth", "draftYear", "debutYear",
+                          "recruitedFrom")
+missing_detail_cols <- setdiff(required_detail_cols, names(details_raw))
+if (length(missing_detail_cols) > 0) {
+  stop("player_details parquet missing columns after name standardisation: ",
+       paste(missing_detail_cols, collapse = ", "),
+       "\nActual columns: ", paste(names(details_raw), collapse = ", "))
+}
+# season may not be in parquet — derive from filename if absent
+if (!"season" %in% names(details_raw)) {
+  derived_season <- as.integer(sub(".*player_details_(\\d{4})\\.parquet$", "\\1", details_file))
+  if (is.na(derived_season)) {
+    stop("Could not derive season from player_details filename: ", basename(details_file),
+         "\nExpected pattern: player_details_YYYY.parquet")
+  }
+  details_raw$season <- derived_season
+}
+details <- details_raw |>
   transmute(
     player_id = providerId,
     player_name,
@@ -83,8 +110,16 @@ details <- read_parquet(details_file) |>
 # Game logs - per-game TORP ratings (up to 5 seasons, depending on source data)
 game_files <- list.files("source", pattern = "^player_game_ratings_", full.names = TRUE)
 if (length(game_files) == 0) stop("No player_game_ratings files found in source/")
-game_logs <- lapply(game_files, read_parquet) |>
-  bind_rows() |>
+game_raw <- lapply(game_files, read_parquet) |> bind_rows()
+required_game_cols <- c("player_id", "player_name", "season", "round", "team", "opp",
+                        "total_points", "recv_points", "disp_points", "spoil_points",
+                        "hitout_points", "match_id")
+missing_game_cols <- setdiff(required_game_cols, names(game_raw))
+if (length(missing_game_cols) > 0) {
+  stop("player_game_ratings parquets missing columns: ",
+       paste(missing_game_cols, collapse = ", "))
+}
+game_logs <- game_raw |>
   transmute(
     player_id,
     player_name,
@@ -101,8 +136,66 @@ game_logs <- lapply(game_files, read_parquet) |>
   ) |>
   arrange(player_id, season, round)
 
-stopifnot(nrow(ratings) > 100, nrow(latest_teams) >= 18, nrow(preds) > 0)
-stopifnot(nrow(details) > 0, nrow(game_logs) > 0)
+# Shot data from PBP — optional, doesn't block core outputs
+# Fallback AFL field dimensions (metres) when venue data is absent in PBP.
+# 165 x 135 m are typical MCG-class dimensions; actual venues vary.
+DEFAULT_VENUE_LENGTH <- 165L
+DEFAULT_VENUE_WIDTH  <- 135L
+
+pbp_files <- list.files("source", pattern = "^pbp_data_\\d{4}_all\\.parquet$", full.names = TRUE)
+shots <- if (length(pbp_files) == 0) {
+  message("INFO: No PBP files in source/ — skipping torp_shots.parquet")
+  NULL
+} else {
+  tryCatch({
+    shot_cols <- c("player_id", "season", "round_number", "x", "y", "distance",
+                   "goal_prob", "points_shot", "phase_of_play", "venue_length",
+                   "venue_width", "shot_at_goal")
+
+    pbp <- lapply(pbp_files, function(f) {
+      df <- read_parquet(f, col_select = any_of(shot_cols))
+      missing <- setdiff(shot_cols, names(df))
+      if (length(missing) > 0) {
+        stop("PBP file ", basename(f), " missing columns: ", paste(missing, collapse = ", "))
+      }
+      df
+    }) |> bind_rows()
+
+    # Encode shot outcome from the shooter's perspective:
+    #   1L = goal (6 pts)
+    #   0L = behind or rushed behind (1 pt — includes both scored and rushedOpp)
+    #  -1L = miss or other (0 pts)
+    pbp |>
+      filter(shot_at_goal == TRUE) |>
+      transmute(
+        player_id,
+        season = as.integer(season),
+        round_number = as.integer(round_number),
+        x = round(x, 1),
+        y = round(y, 1),
+        distance = round(distance, 1),
+        goal_prob = round(goal_prob, 3),
+        shot_result = case_when(
+          points_shot == 6 ~ 1L,
+          points_shot == 1 ~ 0L,
+          TRUE             ~ -1L
+        ),
+        phase_of_play = as.character(phase_of_play),
+        venue_length = coalesce(as.integer(venue_length), DEFAULT_VENUE_LENGTH),
+        venue_width  = coalesce(as.integer(venue_width), DEFAULT_VENUE_WIDTH)
+      )
+  }, error = function(e) {
+    message("::warning::PBP processing failed, skipping torp_shots.parquet: ",
+            conditionMessage(e))
+    NULL
+  })
+}
+
+if (nrow(ratings) <= 100)   stop("ratings has ", nrow(ratings), " rows (expected >100)")
+if (nrow(latest_teams) < 18) stop("latest_teams has ", nrow(latest_teams), " rows (expected >=18)")
+if (nrow(preds) == 0)        stop("preds is empty — no predictions loaded")
+if (nrow(details) == 0)      stop("details is empty — player_details produced no rows")
+if (nrow(game_logs) == 0)    stop("game_logs is empty — player_game_ratings produced no rows")
 
 dir.create("blog", showWarnings = FALSE)
 write_parquet(ratings, "blog/torp_ratings.parquet")
@@ -115,23 +208,28 @@ cat("torp_team_ratings:", nrow(latest_teams), "teams\n")
 cat("torp_predictions:", nrow(preds), "matches\n")
 cat("torp_player_details:", nrow(details), "players\n")
 cat("torp_game_logs:", nrow(game_logs), "game records\n")
+if (!is.null(shots)) {
+  write_parquet(shots, "blog/torp_shots.parquet")
+  cat("torp_shots:", nrow(shots), "shots\n")
+}
 
 # Season simulations — Monte Carlo projections (depends on torp package)
-# Wrapped in tryCatch so simulation failure doesn't block the core parquets
-tryCatch({
-  torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
-  if (is.null(torp_path)) stop("torp package not found at ../torp or ./torp")
+# Package loading and data prep are outside tryCatch so real errors propagate.
+# Only the simulation call itself is wrapped — it legitimately fails pre-season.
+torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
+if (!is.null(torp_path)) {
   devtools::load_all(torp_path, quiet = TRUE)
   library(data.table)
 
-  current_season <- max(preds$season)
+  current_season <- max(preds$season, na.rm = TRUE)
   played <- preds$round[preds$season == current_season & !is.na(preds$actual_margin)]
   latest_round <- if (length(played) > 0) max(played) else 0L
 
   cat("Running", 3000, "season simulations for", current_season,
       "from round", latest_round, "...\n")
 
-  sim_results <- simulate_afl_season(current_season, n_sims = 3000,
+  tryCatch({
+    sim_results <- simulate_afl_season(current_season, n_sims = 3000,
                                      seed = 42, verbose = FALSE)
   summary_dt <- summarise_simulations(sim_results)
   n_sims_val <- sim_results$n_sims
@@ -180,7 +278,7 @@ tryCatch({
   # Current standings from fitzRoy (pre-season = zeros)
   current <- tryCatch({
     ladder <- fitzRoy::fetch_ladder(current_season, source = "AFL")
-    latest_rnd <- max(ladder$round_number)
+    latest_rnd <- max(ladder$round_number, na.rm = TRUE)
     ladder <- ladder[ladder$round_number == latest_rnd, ]
     data.table(
       team = ladder$team.name,
@@ -189,7 +287,7 @@ tryCatch({
       current_pct = round(ladder$thisSeasonRecord.percentage, 1)
     )
   }, error = function(e) {
-    cat("Note: Could not fetch current ladder, using zeros\n")
+    message("::warning::Could not fetch current ladder (using zeros): ", conditionMessage(e))
     data.table(team = summary_dt$team, current_wins = 0L,
                current_losses = 0L, current_pct = NA_real_)
   })
@@ -219,6 +317,9 @@ tryCatch({
   write_parquet(as.data.frame(sim_output), "blog/torp_simulations.parquet")
   cat("torp_simulations:", nrow(sim_output), "teams\n")
 }, error = function(e) {
-  cat("WARNING: Simulation failed, skipping torp_simulations.parquet:",
-      conditionMessage(e), "\n")
+  message("::warning::Simulation failed, skipping torp_simulations.parquet: ",
+          conditionMessage(e))
 })
+} else {
+  message("INFO: torp package not found — skipping simulations")
+}

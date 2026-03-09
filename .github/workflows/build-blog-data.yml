@@ -74,6 +74,18 @@ jobs:
             exit 1
           fi
 
+          # PBP data (for shot charts — optional, doesn't fail build)
+          if gh release download pbp-data -p "pbp_data_*_all.parquet" -D source; then
+            count=$(ls source/pbp_data_*_all.parquet 2>/dev/null | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "::warning::pbp-data release exists but contained no pbp_data_*_all.parquet files — shot charts will be skipped"
+            else
+              echo "Downloaded PBP data: ${count} files"
+            fi
+          else
+            echo "::warning::No PBP data available, shot charts will be skipped"
+          fi
+
           # Per-game ratings (all available seasons for game logs)
           if gh release download player_game_ratings-data -p "player_game_ratings_*.parquet" -D source; then
             count=$(ls source/player_game_ratings_*.parquet 2>/dev/null | wc -l)
