@@ -75,12 +75,16 @@ if ("team.name" %in% names(details_raw) && !"team" %in% names(details_raw)) {
 required_detail_cols <- c("providerId", "player_name", "team", "position",
                           "jumperNumber", "heightInCm", "weightInKg",
                           "dateOfBirth", "draftYear", "debutYear",
-                          "recruitedFrom", "season")
+                          "recruitedFrom")
 missing_detail_cols <- setdiff(required_detail_cols, names(details_raw))
 if (length(missing_detail_cols) > 0) {
   stop("player_details parquet missing columns after name standardisation: ",
        paste(missing_detail_cols, collapse = ", "),
        "\nActual columns: ", paste(names(details_raw), collapse = ", "))
+}
+# season may not be in parquet — derive from filename if absent
+if (!"season" %in% names(details_raw)) {
+  details_raw$season <- as.integer(sub(".*player_details_(\\d{4})\\.parquet$", "\\1", details_file))
 }
 details <- details_raw |>
   transmute(
