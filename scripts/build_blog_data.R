@@ -199,6 +199,8 @@ if (length(pbp_files) > 0) {
                     "period_seconds", "play_type", "phase_of_play",
                     "description", "disposal", "delta_epv", "scored_shot")
 
+    dir.create("blog", showWarnings = FALSE)
+
     for (pbp_file in pbp_files) {
       pbp_season <- as.integer(sub(".*pbp_data_(\\d{4})_all\\.parquet$", "\\1", basename(pbp_file)))
       pbp <- read_parquet(pbp_file, col_select = any_of(event_cols))
