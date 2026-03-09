@@ -64,7 +64,13 @@ preds <- bind_rows(preds_list) |> arrange(season, round, desc(abs(pred_margin)))
 details_file <- list.files("source", pattern = "^player_details_", full.names = TRUE)
 if (length(details_file) == 0) stop("No player_details file found in source/")
 details_file <- max(details_file)
-details <- read_parquet(details_file) |>
+details_raw <- read_parquet(details_file)
+# Standardise column names — AFL API may nest under 'player.'
+names(details_raw) <- sub("^player\\.", "", names(details_raw))
+if ("team.name" %in% names(details_raw) && !"team" %in% names(details_raw)) {
+  names(details_raw)[names(details_raw) == "team.name"] <- "team"
+}
+details <- details_raw |>
   transmute(
     player_id = providerId,
     player_name,
