@@ -268,10 +268,10 @@ if (!is.null(shots)) {
 }
 
 # Season simulations — Monte Carlo projections (depends on torp package)
-# Package loading and data prep are outside tryCatch so real errors propagate.
-# Only the simulation call itself is wrapped — it legitimately fails pre-season.
+# Everything inside tryCatch so missing deps do not block the rest of the pipeline.
 torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
 if (!is.null(torp_path)) {
+  tryCatch({
   devtools::load_all(torp_path, quiet = TRUE)
   library(data.table)
 
@@ -280,9 +280,9 @@ if (!is.null(torp_path)) {
   latest_round <- if (length(played) > 0) max(played) else 0L
 
   cat("Running", 3000, "season simulations for", current_season,
-      "from round", latest_round, "...\n")
+      "from round", latest_round, "...
+")
 
-  tryCatch({
     sim_results <- simulate_afl_season(current_season, n_sims = 3000,
                                      seed = 42, verbose = FALSE)
   summary_dt <- summarise_simulations(sim_results)
