@@ -3,6 +3,13 @@ library(dplyr)
 
 # Player ratings - predictive TORP ratings (career-weighted with exponential decay)
 all_ratings <- read_parquet("source/torp_ratings.parquet")
+message("Ratings columns: ", paste(names(all_ratings), collapse = ", "))
+message("Ratings total rows: ", nrow(all_ratings))
+message("Seasons: ", paste(sort(unique(all_ratings$season)), collapse = ", "))
+max_season <- max(all_ratings$season)
+season_df <- all_ratings[all_ratings$season == max_season, ]
+message("Max season ", max_season, " rows: ", nrow(season_df))
+message("Rounds in max season: ", paste(sort(unique(season_df$round)), collapse = ", "))
 
 ratings <- all_ratings |>
   filter(season == max(season)) |>
@@ -10,6 +17,7 @@ ratings <- all_ratings |>
   select(player_id, player_name, team, position, torp, torp_recv, torp_disp,
          torp_spoil, torp_hitout, gms, season) |>
   arrange(desc(torp))
+message("Filtered ratings rows: ", nrow(ratings))
 
 # Team ratings - most recent round of the most recent season
 teams <- read_parquet("source/team_ratings.parquet")
