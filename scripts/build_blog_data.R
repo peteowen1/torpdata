@@ -10,6 +10,9 @@ max_season <- max(all_ratings$season)
 season_df <- all_ratings[all_ratings$season == max_season, ]
 message("Max season ", max_season, " rows: ", nrow(season_df))
 message("Rounds in max season: ", paste(sort(unique(season_df$round)), collapse = ", "))
+message("Round class: ", class(season_df$round))
+message("Round values (table): ", paste(names(table(season_df$round)), table(season_df$round), sep = "=", collapse = ", "))
+message("Max round: ", max(season_df$round))
 
 ratings <- all_ratings |>
   filter(season == max(season)) |>
