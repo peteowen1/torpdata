@@ -72,7 +72,7 @@ names(details_raw) <- sub("^player\\.", "", names(details_raw))
 if ("team.name" %in% names(details_raw) && !"team" %in% names(details_raw)) {
   names(details_raw)[names(details_raw) == "team.name"] <- "team"
 }
-required_detail_cols <- c("providerId", "player_name", "team", "position",
+required_detail_cols <- c("player_id", "player_name", "team", "position",
                           "jumperNumber", "heightInCm", "weightInKg",
                           "dateOfBirth", "draftYear", "debutYear",
                           "recruitedFrom")
@@ -93,7 +93,7 @@ if (!"season" %in% names(details_raw)) {
 }
 details <- details_raw |>
   transmute(
-    player_id = providerId,
+    player_id,
     player_name,
     team,
     position,
