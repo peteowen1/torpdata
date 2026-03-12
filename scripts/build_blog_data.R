@@ -65,17 +65,31 @@ details_file <- list.files("source", pattern = "^player_details_", full.names = 
 if (length(details_file) == 0) stop("No player_details file found in source/")
 details_file <- max(details_file)
 details_raw <- read_parquet(details_file)
-# Standardise column names — strip 'player.' prefix from flattened AFL API response.
-# Defensive shim for parquets uploaded before get_afl_player_details() was fixed;
-# new parquets already have clean names so this is a no-op for them.
+# Standardise column names — handle both old camelCase and new snake_case formats.
+# Strip 'player.' prefix from legacy flattened AFL API response (no-op for new parquets).
 names(details_raw) <- sub("^player\\.", "", names(details_raw))
 if ("team.name" %in% names(details_raw) && !"team" %in% names(details_raw)) {
   names(details_raw)[names(details_raw) == "team.name"] <- "team"
 }
+# Rename old camelCase columns → snake_case (no-op if already snake_case)
+old_to_new <- c(
+  jumperNumber = "jumper_number", heightInCm = "height_cm", weightInKg = "weight_kg",
+  dateOfBirth = "date_of_birth", draftYear = "draft_year", debutYear = "debut_year",
+  recruitedFrom = "recruited_from"
+)
+for (old_nm in names(old_to_new)) {
+  if (old_nm %in% names(details_raw) && !old_to_new[[old_nm]] %in% names(details_raw)) {
+    names(details_raw)[names(details_raw) == old_nm] <- old_to_new[[old_nm]]
+  }
+}
+# Handle first_name + surname → player_name (new format)
+if (!"player_name" %in% names(details_raw) && all(c("first_name", "surname") %in% names(details_raw))) {
+  details_raw$player_name <- paste(details_raw$first_name, details_raw$surname)
+}
 required_detail_cols <- c("player_id", "player_name", "team", "position",
-                          "jumperNumber", "heightInCm", "weightInKg",
-                          "dateOfBirth", "draftYear", "debutYear",
-                          "recruitedFrom")
+                          "jumper_number", "height_cm", "weight_kg",
+                          "date_of_birth", "draft_year", "debut_year",
+                          "recruited_from")
 missing_detail_cols <- setdiff(required_detail_cols, names(details_raw))
 if (length(missing_detail_cols) > 0) {
   stop("player_details parquet missing columns after name standardisation: ",
@@ -97,13 +111,13 @@ details <- details_raw |>
     player_name,
     team,
     position,
-    jumper_number = jumperNumber,
-    height_cm = heightInCm,
-    weight_kg = weightInKg,
-    date_of_birth = dateOfBirth,
-    draft_year = draftYear,
-    debut_year = debutYear,
-    recruited_from = recruitedFrom,
+    jumper_number,
+    height_cm,
+    weight_kg,
+    date_of_birth,
+    draft_year,
+    debut_year,
+    recruited_from,
     season
   )
 
@@ -135,6 +149,44 @@ game_logs <- game_raw |>
     match_id
   ) |>
   arrange(player_id, season, round)
+
+# Raw game stats — box-score stats for match stats toggle (optional)
+game_stat_files <- list.files("source", pattern = "^player_game_\\d{4}\\.parquet$", full.names = TRUE)
+game_stats <- if (length(game_stat_files) == 0) {
+  message("INFO: No player_game files in source/ — skipping torp_game_stats.parquet")
+  NULL
+} else {
+  tryCatch({
+    raw <- lapply(game_stat_files, read_parquet) |> bind_rows()
+    current_season <- max(raw$season, na.rm = TRUE)
+    raw |>
+      filter(season >= current_season - 1L) |>
+      transmute(
+        player_id, player_name, season, round, team, opponent, match_id,
+        time_on_ground_percentage,
+        # Scoring
+        goals, behinds, shots_at_goal, score_involvements, goal_assists, marks_inside50,
+        # Possession
+        disposals, kicks, handballs, marks,
+        uncontested_possessions, clangers, turnovers,
+        # Contested
+        contested_possessions, contested_marks, ground_ball_gets,
+        frees_for, frees_against,
+        # Midfield
+        clearances, inside50s, rebound50s, bounces, metres_gained,
+        # Defense
+        tackles, intercepts, one_percenters,
+        pressure_acts, def_half_pressure_acts,
+        # Ruck
+        hitouts, hitouts_to_advantage, ruck_contests
+      ) |>
+      arrange(player_id, season, round)
+  }, error = function(e) {
+    message("::warning::Game stats processing failed, skipping torp_game_stats.parquet: ",
+            conditionMessage(e))
+    NULL
+  })
+}
 
 # Shot data from PBP — optional, doesn't block core outputs
 # Fallback AFL field dimensions (metres) when venue data is absent in PBP.
@@ -265,6 +317,10 @@ cat("torp_game_logs:", nrow(game_logs), "game records\n")
 if (!is.null(shots)) {
   write_parquet(shots, "blog/torp_shots.parquet")
   cat("torp_shots:", nrow(shots), "shots\n")
+}
+if (!is.null(game_stats)) {
+  write_parquet(game_stats, "blog/torp_game_stats.parquet")
+  cat("torp_game_stats:", nrow(game_stats), "game stat records\n")
 }
 
 # Season simulations — Monte Carlo projections (depends on torp package)

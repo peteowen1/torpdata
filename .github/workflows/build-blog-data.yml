@@ -99,6 +99,15 @@ jobs:
             exit 1
           fi
 
+          # Raw game stats (box-score stats for match page toggle — optional)
+          # Pattern: player_game_YYYY.parquet (NOT player_game_ratings_*)
+          if gh release download player_game-data -p "player_game_[0-9]*.parquet" -D source; then
+            count=$(ls source/player_game_[0-9]*.parquet 2>/dev/null | wc -l)
+            echo "Downloaded raw game stats: ${count} files"
+          else
+            echo "::warning::No raw game stats available, match stats toggle will be skipped"
+          fi
+
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
 
