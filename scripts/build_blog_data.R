@@ -286,7 +286,7 @@ if (length(pbp_files) > 0) {
                category, detail, equity, cumulative_total,
                is_contested, is_ineffective, is_goal, is_free_against, role)
 
-      out_name <- paste0("torp_match_events_", pbp_season, ".parquet")
+      out_name <- paste0("match-events-", pbp_season, ".parquet")
       write_parquet(events, file.path("blog", out_name))
       cat(out_name, ":", nrow(events), "events\n")
     }
@@ -304,23 +304,23 @@ if (nrow(details) == 0)      stop("details is empty — player_details produced 
 if (nrow(game_logs) == 0)    stop("game_logs is empty — player_game_ratings produced no rows")
 
 dir.create("blog", showWarnings = FALSE)
-write_parquet(ratings, "blog/torp_ratings.parquet")
-write_parquet(latest_teams, "blog/torp_team_ratings.parquet")
-write_parquet(preds, "blog/torp_predictions.parquet")
-write_parquet(details, "blog/torp_player_details.parquet")
-write_parquet(game_logs, "blog/torp_game_logs.parquet")
-cat("torp_ratings:", nrow(ratings), "players\n")
-cat("torp_team_ratings:", nrow(latest_teams), "teams\n")
-cat("torp_predictions:", nrow(preds), "matches\n")
-cat("torp_player_details:", nrow(details), "players\n")
-cat("torp_game_logs:", nrow(game_logs), "game records\n")
+write_parquet(ratings, "blog/ratings.parquet")
+write_parquet(latest_teams, "blog/team-ratings.parquet")
+write_parquet(preds, "blog/predictions.parquet")
+write_parquet(details, "blog/player-details.parquet")
+write_parquet(game_logs, "blog/game-logs.parquet")
+cat("ratings:", nrow(ratings), "players\n")
+cat("team-ratings:", nrow(latest_teams), "teams\n")
+cat("predictions:", nrow(preds), "matches\n")
+cat("player-details:", nrow(details), "players\n")
+cat("game-logs:", nrow(game_logs), "game records\n")
 if (!is.null(shots)) {
-  write_parquet(shots, "blog/torp_shots.parquet")
-  cat("torp_shots:", nrow(shots), "shots\n")
+  write_parquet(shots, "blog/shots.parquet")
+  cat("shots:", nrow(shots), "shots\n")
 }
 if (!is.null(game_stats)) {
-  write_parquet(game_stats, "blog/torp_game_stats.parquet")
-  cat("torp_game_stats:", nrow(game_stats), "game stat records\n")
+  write_parquet(game_stats, "blog/game-stats.parquet")
+  cat("game-stats:", nrow(game_stats), "game stat records\n")
 }
 
 # Season simulations — Monte Carlo projections (depends on torp package)
@@ -424,10 +424,10 @@ if (!is.null(torp_path)) {
   sim_output[, round := latest_round]
   sim_output[, n_sims := n_sims_val]
 
-  write_parquet(as.data.frame(sim_output), "blog/torp_simulations.parquet")
-  cat("torp_simulations:", nrow(sim_output), "teams\n")
+  write_parquet(as.data.frame(sim_output), "blog/simulations.parquet")
+  cat("simulations:", nrow(sim_output), "teams\n")
 }, error = function(e) {
-  message("::warning::Simulation failed, skipping torp_simulations.parquet: ",
+  message("::warning::Simulation failed, skipping simulations.parquet: ",
           conditionMessage(e))
 })
 } else {
