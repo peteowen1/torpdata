@@ -2,9 +2,11 @@ name: Daily Data Release
 
 on:
   schedule:
-    # Run at 2:00 AM AEST (16:00 UTC previous day)
-    # This timing catches late Monday night games
-    - cron: '0 16 * * *'
+    # AFL games run Thu–Mon. Stats are available ~3–4 hours after game start.
+    # Multiple runs ensure data is fresh by the time users wake up.
+    - cron: '0 16 * * *'        # 2:00 AM AEST daily (catches overnight results)
+    - cron: '0 12 * * 4,5,6,0'  # 10:00 PM AEST Thu/Fri/Sat/Sun (evening games)
+    - cron: '0 6 * * 6,0'       # 4:00 PM AEST Sat/Sun (afternoon games)
   workflow_dispatch:
     inputs:
       force_release:

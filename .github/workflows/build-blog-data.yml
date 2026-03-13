@@ -111,6 +111,41 @@ jobs:
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
 
+      - name: Download extra parquets for R2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          YEAR=$(date +%Y)
+          mkdir -p blog
+
+          # Teams lineup data → afl_teams_YEAR.parquet
+          if gh release download teams-data -p "teams_${YEAR}.parquet" -D blog; then
+            SIZE=$(stat -c%s "blog/teams_${YEAR}.parquet")
+            if [ "$SIZE" -lt 1000 ]; then
+              echo "::warning::teams_${YEAR}.parquet suspiciously small (${SIZE} bytes) — removing"
+              rm "blog/teams_${YEAR}.parquet"
+            else
+              mv "blog/teams_${YEAR}.parquet" "blog/afl_teams_${YEAR}.parquet"
+              echo "Downloaded teams_${YEAR}.parquet (${SIZE} bytes) → afl_teams_${YEAR}.parquet"
+            fi
+          else
+            echo "::warning::teams_${YEAR}.parquet not available — lineups won't update"
+          fi
+
+          # Player skills → torp_player_skills.parquet
+          if gh release download player_skills-data -p "player_skills_${YEAR}.parquet" -D blog; then
+            SIZE=$(stat -c%s "blog/player_skills_${YEAR}.parquet")
+            if [ "$SIZE" -lt 1000 ]; then
+              echo "::warning::player_skills_${YEAR}.parquet suspiciously small (${SIZE} bytes) — removing"
+              rm "blog/player_skills_${YEAR}.parquet"
+            else
+              mv "blog/player_skills_${YEAR}.parquet" "blog/torp_player_skills.parquet"
+              echo "Downloaded player_skills_${YEAR}.parquet (${SIZE} bytes) → torp_player_skills.parquet"
+            fi
+          else
+            echo "::warning::player_skills_${YEAR}.parquet not available — skills data won't update"
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
