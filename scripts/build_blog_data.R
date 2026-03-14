@@ -444,19 +444,18 @@ if (!is.null(torp_path)) {
   finals_stage[, team := norm_team(team)]
   pos_dist[, team := norm_team(team)]
 
-  # Current standings from fitzRoy (pre-season = zeros)
+  # Current standings from internal AFL API (pre-season = zeros)
   current <- tryCatch({
-    ladder <- fitzRoy::fetch_ladder(current_season, source = "AFL")
-    latest_rnd <- max(ladder$round_number, na.rm = TRUE)
-    ladder <- ladder[ladder$round_number == latest_rnd, ]
+    ladder <- get_afl_ladder(current_season)
+    if (nrow(ladder) == 0) stop("No ladder data available")
     data.table(
-      team = ladder$team.name,
-      current_wins = as.integer(ladder$thisSeasonRecord.winLossRecord.wins),
-      current_losses = as.integer(ladder$thisSeasonRecord.winLossRecord.losses),
-      current_pct = round(ladder$thisSeasonRecord.percentage, 1)
+      team = ladder$team,
+      current_wins = as.integer(ladder$wins),
+      current_losses = as.integer(ladder$losses),
+      current_pct = round(ladder$percentage, 1)
     )
   }, error = function(e) {
-    message("::warning::Could not fetch current ladder (using zeros): ", conditionMessage(e))
+    message("::warning::Could not compute current ladder (using zeros): ", conditionMessage(e))
     data.table(team = summary_dt$team, current_wins = 0L,
                current_losses = 0L, current_pct = NA_real_)
   })

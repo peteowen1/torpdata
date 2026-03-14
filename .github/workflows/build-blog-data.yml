@@ -30,7 +30,6 @@ jobs:
             any::arrow
             any::dplyr
             any::data.table
-            any::fitzRoy
             any::cli
             any::devtools
 
