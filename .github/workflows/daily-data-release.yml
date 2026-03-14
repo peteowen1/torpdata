@@ -55,7 +55,6 @@ jobs:
           extra-packages: |
             any::devtools
             any::piggyback
-            any::fitzRoy
             any::tictoc
             any::mgcv
             any::cli
@@ -234,7 +233,7 @@ jobs:
             Please check the [workflow run](${context.payload.repository.html_url}/actions/runs/${context.runId}) for details.
 
             **Troubleshooting:**
-            1. Check if fitzRoy API is accessible
+            1. Check if AFL API is accessible
             2. Verify WORKFLOW_PAT has write permissions to torpdata releases
             3. Review error logs for specific data type failures
 

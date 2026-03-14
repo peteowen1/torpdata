@@ -286,7 +286,7 @@ if (length(pbp_files) > 0) {
                category, detail, equity, cumulative_total,
                is_contested, is_ineffective, is_goal, is_free_against, role)
 
-      out_name <- paste0("torp_match_events_", pbp_season, ".parquet")
+      out_name <- paste0("match-events-", pbp_season, ".parquet")
       write_parquet(events, file.path("blog", out_name))
       cat(out_name, ":", nrow(events), "events\n")
     }
@@ -297,6 +297,65 @@ if (length(pbp_files) > 0) {
   message("INFO: No PBP files — skipping match events")
 }
 
+# Chain data from PBP — per-season chain action data for match-chains page
+# Optional: uses same pbp_files as shots/match-events
+if (length(pbp_files) > 0) {
+  tryCatch({
+    chain_cols <- c("match_id", "chain_number", "display_order", "player_id",
+                    "player_name_given_name", "player_name_surname",
+                    "team_id", "home_team_id", "home_team_name", "away_team_name",
+                    "x", "y", "description", "delta_epv", "disposal",
+                    "final_state", "initial_state", "period", "period_seconds",
+                    "shot_at_goal", "season", "round_number",
+                    "venue_length", "venue_width")
+
+    dir.create("blog", showWarnings = FALSE)
+
+    for (pbp_file in pbp_files) {
+      pbp_season <- as.integer(sub(".*pbp_data_(\\d{4})_all\\.parquet$", "\\1", basename(pbp_file)))
+      pbp <- read_parquet(pbp_file, col_select = any_of(chain_cols))
+
+      chains <- pbp |>
+        filter(!is.na(chain_number)) |>
+        transmute(
+          match_id,
+          chain_number = as.integer(chain_number),
+          display_order = as.integer(display_order),
+          player_id,
+          player_name = trimws(paste(coalesce(player_name_given_name, ""),
+                                     coalesce(player_name_surname, ""))),
+          team_id,
+          home_team_id,
+          home_team = home_team_name,
+          away_team = away_team_name,
+          x = round(x, 1),
+          y = round(y, 1),
+          description,
+          delta_epv = round(delta_epv, 4),
+          disposal = as.character(disposal),
+          final_state,
+          initial_state,
+          period = as.integer(period),
+          period_seconds = as.integer(period_seconds),
+          shot_at_goal = !is.na(shot_at_goal) & shot_at_goal == TRUE,
+          season = as.integer(season),
+          round_number = as.integer(round_number),
+          venue_length = coalesce(as.integer(venue_length), DEFAULT_VENUE_LENGTH),
+          venue_width = coalesce(as.integer(venue_width), DEFAULT_VENUE_WIDTH)
+        ) |>
+        arrange(match_id, chain_number, display_order)
+
+      out_name <- paste0("chains-", pbp_season, ".parquet")
+      write_parquet(chains, file.path("blog", out_name))
+      cat(out_name, ":", nrow(chains), "chain actions\n")
+    }
+  }, error = function(e) {
+    message("::warning::Chain data processing failed: ", conditionMessage(e))
+  })
+} else {
+  message("INFO: No PBP files — skipping chain data")
+}
+
 if (nrow(ratings) <= 100)   stop("ratings has ", nrow(ratings), " rows (expected >100)")
 if (nrow(latest_teams) < 18) stop("latest_teams has ", nrow(latest_teams), " rows (expected >=18)")
 if (nrow(preds) == 0)        stop("preds is empty — no predictions loaded")
@@ -304,23 +363,23 @@ if (nrow(details) == 0)      stop("details is empty — player_details produced 
 if (nrow(game_logs) == 0)    stop("game_logs is empty — player_game_ratings produced no rows")
 
 dir.create("blog", showWarnings = FALSE)
-write_parquet(ratings, "blog/torp_ratings.parquet")
-write_parquet(latest_teams, "blog/torp_team_ratings.parquet")
-write_parquet(preds, "blog/torp_predictions.parquet")
-write_parquet(details, "blog/torp_player_details.parquet")
-write_parquet(game_logs, "blog/torp_game_logs.parquet")
-cat("torp_ratings:", nrow(ratings), "players\n")
-cat("torp_team_ratings:", nrow(latest_teams), "teams\n")
-cat("torp_predictions:", nrow(preds), "matches\n")
-cat("torp_player_details:", nrow(details), "players\n")
-cat("torp_game_logs:", nrow(game_logs), "game records\n")
+write_parquet(ratings, "blog/ratings.parquet")
+write_parquet(latest_teams, "blog/team-ratings.parquet")
+write_parquet(preds, "blog/predictions.parquet")
+write_parquet(details, "blog/player-details.parquet")
+write_parquet(game_logs, "blog/game-logs.parquet")
+cat("ratings:", nrow(ratings), "players\n")
+cat("team-ratings:", nrow(latest_teams), "teams\n")
+cat("predictions:", nrow(preds), "matches\n")
+cat("player-details:", nrow(details), "players\n")
+cat("game-logs:", nrow(game_logs), "game records\n")
 if (!is.null(shots)) {
-  write_parquet(shots, "blog/torp_shots.parquet")
-  cat("torp_shots:", nrow(shots), "shots\n")
+  write_parquet(shots, "blog/shots.parquet")
+  cat("shots:", nrow(shots), "shots\n")
 }
 if (!is.null(game_stats)) {
-  write_parquet(game_stats, "blog/torp_game_stats.parquet")
-  cat("torp_game_stats:", nrow(game_stats), "game stat records\n")
+  write_parquet(game_stats, "blog/game-stats.parquet")
+  cat("game-stats:", nrow(game_stats), "game stat records\n")
 }
 
 # Season simulations — Monte Carlo projections (depends on torp package)
@@ -385,19 +444,18 @@ if (!is.null(torp_path)) {
   finals_stage[, team := norm_team(team)]
   pos_dist[, team := norm_team(team)]
 
-  # Current standings from fitzRoy (pre-season = zeros)
+  # Current standings from internal AFL API (pre-season = zeros)
   current <- tryCatch({
-    ladder <- fitzRoy::fetch_ladder(current_season, source = "AFL")
-    latest_rnd <- max(ladder$round_number, na.rm = TRUE)
-    ladder <- ladder[ladder$round_number == latest_rnd, ]
+    ladder <- get_afl_ladder(current_season)
+    if (nrow(ladder) == 0) stop("No ladder data available")
     data.table(
-      team = ladder$team.name,
-      current_wins = as.integer(ladder$thisSeasonRecord.winLossRecord.wins),
-      current_losses = as.integer(ladder$thisSeasonRecord.winLossRecord.losses),
-      current_pct = round(ladder$thisSeasonRecord.percentage, 1)
+      team = ladder$team,
+      current_wins = as.integer(ladder$wins),
+      current_losses = as.integer(ladder$losses),
+      current_pct = round(ladder$percentage, 1)
     )
   }, error = function(e) {
-    message("::warning::Could not fetch current ladder (using zeros): ", conditionMessage(e))
+    message("::warning::Could not compute current ladder (using zeros): ", conditionMessage(e))
     data.table(team = summary_dt$team, current_wins = 0L,
                current_losses = 0L, current_pct = NA_real_)
   })
@@ -424,10 +482,10 @@ if (!is.null(torp_path)) {
   sim_output[, round := latest_round]
   sim_output[, n_sims := n_sims_val]
 
-  write_parquet(as.data.frame(sim_output), "blog/torp_simulations.parquet")
-  cat("torp_simulations:", nrow(sim_output), "teams\n")
+  write_parquet(as.data.frame(sim_output), "blog/simulations.parquet")
+  cat("simulations:", nrow(sim_output), "teams\n")
 }, error = function(e) {
-  message("::warning::Simulation failed, skipping torp_simulations.parquet: ",
+  message("::warning::Simulation failed, skipping simulations.parquet: ",
           conditionMessage(e))
 })
 } else {

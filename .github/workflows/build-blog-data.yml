@@ -30,7 +30,6 @@ jobs:
             any::arrow
             any::dplyr
             any::data.table
-            any::fitzRoy
             any::cli
             any::devtools
 
@@ -118,29 +117,29 @@ jobs:
           YEAR=$(date +%Y)
           mkdir -p blog
 
-          # Teams lineup data → afl_teams_YEAR.parquet
+          # Teams lineup data → teams-YEAR.parquet
           if gh release download teams-data -p "teams_${YEAR}.parquet" -D blog; then
             SIZE=$(stat -c%s "blog/teams_${YEAR}.parquet")
             if [ "$SIZE" -lt 1000 ]; then
               echo "::warning::teams_${YEAR}.parquet suspiciously small (${SIZE} bytes) — removing"
               rm "blog/teams_${YEAR}.parquet"
             else
-              mv "blog/teams_${YEAR}.parquet" "blog/afl_teams_${YEAR}.parquet"
-              echo "Downloaded teams_${YEAR}.parquet (${SIZE} bytes) → afl_teams_${YEAR}.parquet"
+              mv "blog/teams_${YEAR}.parquet" "blog/teams-${YEAR}.parquet"
+              echo "Downloaded teams_${YEAR}.parquet (${SIZE} bytes) → teams-${YEAR}.parquet"
             fi
           else
             echo "::warning::teams_${YEAR}.parquet not available — lineups won't update"
           fi
 
-          # Player skills → torp_player_skills.parquet
+          # Player skills → player-skills.parquet
           if gh release download player_skills-data -p "player_skills_${YEAR}.parquet" -D blog; then
             SIZE=$(stat -c%s "blog/player_skills_${YEAR}.parquet")
             if [ "$SIZE" -lt 1000 ]; then
               echo "::warning::player_skills_${YEAR}.parquet suspiciously small (${SIZE} bytes) — removing"
               rm "blog/player_skills_${YEAR}.parquet"
             else
-              mv "blog/player_skills_${YEAR}.parquet" "blog/torp_player_skills.parquet"
-              echo "Downloaded player_skills_${YEAR}.parquet (${SIZE} bytes) → torp_player_skills.parquet"
+              mv "blog/player_skills_${YEAR}.parquet" "blog/player-skills.parquet"
+              echo "Downloaded player_skills_${YEAR}.parquet (${SIZE} bytes) → player-skills.parquet"
             fi
           else
             echo "::warning::player_skills_${YEAR}.parquet not available — skills data won't update"
@@ -169,10 +168,10 @@ jobs:
             exit 1
           fi
           for f in "${files[@]}"; do
-            echo "Uploading $(basename $f)..."
-            if ! wrangler r2 object put "inthegame-data/$(basename $f)" --file "$f" --remote; then
-              echo "::error::Failed to upload $(basename $f) to R2"
+            echo "Uploading afl/$(basename $f)..."
+            if ! wrangler r2 object put "inthegame-data/afl/$(basename $f)" --file "$f" --remote; then
+              echo "::error::Failed to upload afl/$(basename $f) to R2"
               exit 1
             fi
           done
-          echo "Uploaded ${#files[@]} files to R2"
+          echo "Uploaded ${#files[@]} files to R2 (afl/ prefix)"
