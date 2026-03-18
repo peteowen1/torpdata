@@ -178,7 +178,10 @@ game_stats <- if (length(game_stat_files) == 0) {
         tackles, intercepts, one_percenters,
         pressure_acts, def_half_pressure_acts,
         # Ruck
-        hitouts, hitouts_to_advantage, ruck_contests
+        hitouts, hitouts_to_advantage, ruck_contests,
+        # Efficiency
+        any_of(c("effective_disposals", "effective_kicks",
+                 "disposal_efficiency", "kick_efficiency"))
       ) |>
       arrange(player_id, season, round)
   }, error = function(e) {
