@@ -204,8 +204,8 @@ shots <- if (length(pbp_files) == 0) {
 } else {
   tryCatch({
     shot_cols <- c("player_id", "season", "round_number", "x", "y", "distance",
-                   "goal_prob", "points_shot", "phase_of_play", "venue_length",
-                   "venue_width", "shot_at_goal")
+                   "goal_prob", "behind_prob", "xscore", "points_shot",
+                   "phase_of_play", "venue_length", "venue_width", "shot_at_goal")
 
     pbp <- lapply(pbp_files, function(f) {
       df <- read_parquet(f, col_select = any_of(shot_cols))
@@ -230,6 +230,8 @@ shots <- if (length(pbp_files) == 0) {
         y = round(y, 1),
         distance = round(distance, 1),
         goal_prob = round(goal_prob, 3),
+        behind_prob = round(behind_prob, 3),
+        xscore = round(xscore, 2),
         shot_result = case_when(
           points_shot == 6 ~ 1L,
           points_shot == 1 ~ 0L,
