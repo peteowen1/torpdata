@@ -63,6 +63,7 @@ jobs:
         run: |
           Rscript -e "
             devtools::load_all()
+            source('data-raw/01-data/daily_release.R')
             has_new <- has_new_team_data()
             cat(paste0('has_new_lineups=', tolower(has_new), '\n'),
                 file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
