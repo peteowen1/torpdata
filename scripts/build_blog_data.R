@@ -182,7 +182,7 @@ game_stats <- if (length(game_stat_files) == 0) {
     current_season <- max(raw$season, na.rm = TRUE)
     raw |>
       filter(season >= current_season - 1L) |>
-      transmute(
+      select(
         player_id, player_name, season, round, team, opponent, match_id,
         time_on_ground_percentage,
         # Scoring
