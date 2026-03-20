@@ -178,7 +178,10 @@ game_stats <- if (length(game_stat_files) == 0) {
         tackles, intercepts, one_percenters,
         pressure_acts, def_half_pressure_acts,
         # Ruck
-        hitouts, hitouts_to_advantage, ruck_contests
+        hitouts, hitouts_to_advantage, ruck_contests,
+        # Efficiency
+        any_of(c("effective_disposals", "effective_kicks",
+                 "disposal_efficiency", "kick_efficiency"))
       ) |>
       arrange(player_id, season, round)
   }, error = function(e) {
@@ -201,8 +204,8 @@ shots <- if (length(pbp_files) == 0) {
 } else {
   tryCatch({
     shot_cols <- c("player_id", "season", "round_number", "x", "y", "distance",
-                   "goal_prob", "points_shot", "phase_of_play", "venue_length",
-                   "venue_width", "shot_at_goal")
+                   "goal_prob", "behind_prob", "xscore", "points_shot",
+                   "phase_of_play", "venue_length", "venue_width", "shot_at_goal")
 
     pbp <- lapply(pbp_files, function(f) {
       df <- read_parquet(f, col_select = any_of(shot_cols))
@@ -227,6 +230,8 @@ shots <- if (length(pbp_files) == 0) {
         y = round(y, 1),
         distance = round(distance, 1),
         goal_prob = round(goal_prob, 3),
+        behind_prob = round(behind_prob, 3),
+        xscore = round(xscore, 2),
         shot_result = case_when(
           points_shot == 6 ~ 1L,
           points_shot == 1 ~ 0L,
@@ -394,11 +399,41 @@ if (!is.null(torp_path)) {
   played <- preds$round[preds$season == current_season & !is.na(preds$actual_margin)]
   latest_round <- if (length(played) > 0) max(played) else 0L
 
-  cat("Running", 3000, "season simulations for", current_season,
-      "from round", latest_round, "...
-")
+  # Injury data — scrape live and build return schedule for blog
+  inj_df <- tryCatch({
+    inj <- get_all_injuries(current_season)
+    if (nrow(inj) > 0) {
+      inj$return_round <- parse_return_round(
+        inj$estimated_return, current_season, latest_round
+      )
+    }
+    inj
+  }, error = function(e) {
+    message("::warning::Injury scrape failed: ", conditionMessage(e))
+    NULL
+  })
+
+  if (!is.null(inj_df) && nrow(inj_df) > 0) {
+    injuries_blog <- inj_df |>
+      transmute(
+        player = player,
+        team = team,
+        injury = injury,
+        estimated_return = estimated_return,
+        return_round = return_round,
+        updated = as.character(updated),
+        source = source
+      ) |>
+      arrange(team, return_round)
+    write_parquet(as.data.frame(injuries_blog), "blog/injuries.parquet")
+    cat("injuries:", nrow(injuries_blog), "players\n")
+  }
+
+  cat("Running", 3000, "injury-aware season simulations for", current_season,
+      "from round", latest_round, "...\n")
 
     sim_results <- simulate_afl_season(current_season, n_sims = 3000,
+                                     injuries = inj_df,
                                      seed = 42, verbose = FALSE)
   summary_dt <- summarise_simulations(sim_results)
   n_sims_val <- sim_results$n_sims
