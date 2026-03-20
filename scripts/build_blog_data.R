@@ -134,12 +134,14 @@ details <- details_raw |>
 game_files <- list.files("source", pattern = "^player_game_ratings_", full.names = TRUE)
 if (length(game_files) == 0) stop("No player_game_ratings files found in source/")
 game_raw <- lapply(game_files, read_parquet) |> bind_rows()
-# Handle column name evolution: total_points → epv_raw → epv_adj
+# Handle column name evolution: total_points → epv_raw → epv (current)
 col_renames <- c(
-  total_points = "epv_raw", recv_points = "recv_epv_raw", disp_points = "disp_epv_raw",
-  spoil_points = "spoil_epv_raw", hitout_points = "hitout_epv_raw",
-  epv_adj = "epv_raw", recv_epv_adj = "recv_epv_raw", disp_epv_adj = "disp_epv_raw",
-  spoil_epv_adj = "spoil_epv_raw", hitout_epv_adj = "hitout_epv_raw"
+  total_points = "epv", recv_points = "recv_epv", disp_points = "disp_epv",
+  spoil_points = "spoil_epv", hitout_points = "hitout_epv",
+  epv_adj = "epv", recv_epv_adj = "recv_epv", disp_epv_adj = "disp_epv",
+  spoil_epv_adj = "spoil_epv", hitout_epv_adj = "hitout_epv",
+  epv_raw = "epv", recv_epv_raw = "recv_epv", disp_epv_raw = "disp_epv",
+  spoil_epv_raw = "spoil_epv", hitout_epv_raw = "hitout_epv"
 )
 for (old_nm in names(col_renames)) {
   new_nm <- col_renames[[old_nm]]
@@ -148,8 +150,8 @@ for (old_nm in names(col_renames)) {
   }
 }
 required_game_cols <- c("player_id", "player_name", "season", "round", "team", "opp",
-                        "epv_raw", "recv_epv_raw", "disp_epv_raw", "spoil_epv_raw",
-                        "hitout_epv_raw", "match_id")
+                        "epv", "recv_epv", "disp_epv", "spoil_epv",
+                        "hitout_epv", "match_id")
 missing_game_cols <- setdiff(required_game_cols, names(game_raw))
 if (length(missing_game_cols) > 0) {
   stop("player_game_ratings parquets missing columns: ",
@@ -163,11 +165,11 @@ game_logs <- game_raw |>
     round,
     team,
     opp,
-    torp = epv_raw,
-    torp_recv = recv_epv_raw,
-    torp_disp = disp_epv_raw,
-    torp_spoil = spoil_epv_raw,
-    torp_hitout = hitout_epv_raw,
+    torp = epv,
+    torp_recv = recv_epv,
+    torp_disp = disp_epv,
+    torp_spoil = spoil_epv,
+    torp_hitout = hitout_epv,
     match_id
   ) |>
   arrange(player_id, season, round)
