@@ -16,9 +16,9 @@ for (old_nm in names(ratings_renames)) {
 
 ratings <- all_ratings |>
   filter(season == max(season, na.rm = TRUE)) |>
-  filter(round == max(round, na.rm = TRUE)) |>
   select(player_id, player_name, team, position, torp, recv_epr, disp_epr,
-         spoil_epr, hitout_epr, gms, season) |>
+         spoil_epr, hitout_epr, gms, season, round,
+         any_of(c("epr", "psr", "osr", "dsr"))) |>
   arrange(desc(torp))
 
 # Team ratings - most recent round of the most recent season
