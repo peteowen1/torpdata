@@ -2,11 +2,37 @@ name: Daily Data Release
 
 on:
   schedule:
-    # AFL games run Thu–Mon. Stats are available ~3–4 hours after game start.
-    # Multiple runs ensure data is fresh by the time users wake up.
-    - cron: '0 16 * * *'        # 2:00 AM AEST daily (catches overnight results)
-    - cron: '0 12 * * 4,5,6,0'  # 10:00 PM AEST Thu/Fri/Sat/Sun (evening games)
-    - cron: '0 6 * * 6,0'       # 4:00 PM AEST Sat/Sun (afternoon games)
+    # AFL games run Thu–Mon. Stats available ~30min after final siren.
+    # has_new_games() exits early (~30s) when no new data, so extra runs are cheap.
+
+    # Thursday evening (1-2 games)
+    - cron: '30 12 * * 4'   # 10:30 PM AEST — after evening game
+    - cron: '30 13 * * 4'   # 11:30 PM AEST — catch late stats
+
+    # Friday (occasional afternoon + evening games)
+    - cron: '0 8 * * 5'     #  6:00 PM AEST — after afternoon game if any
+    - cron: '30 12 * * 5'   # 10:30 PM AEST — after evening game
+    - cron: '30 13 * * 5'   # 11:30 PM AEST — catch late stats
+
+    # Saturday (busiest day: early afternoon through night)
+    - cron: '30 5 * * 6'    #  3:30 PM AEST — after 12:35/1:15 PM games
+    - cron: '30 7 * * 6'    #  5:30 PM AEST — after ~3:15 PM games
+    - cron: '0 10 * * 6'    #  8:00 PM AEST — after twilight games
+    - cron: '30 12 * * 6'   # 10:30 PM AEST — after night games
+    - cron: '30 13 * * 6'   # 11:30 PM AEST — catch late stats
+
+    # Sunday (multiple afternoon/evening games)
+    - cron: '30 5 * * 0'    #  3:30 PM AEST — after early games
+    - cron: '30 7 * * 0'    #  5:30 PM AEST — after afternoon games
+    - cron: '0 10 * * 0'    #  8:00 PM AEST — after twilight games
+    - cron: '30 12 * * 0'   # 10:30 PM AEST — after evening games
+
+    # Monday (occasional public holiday games)
+    - cron: '0 8 * * 1'     #  6:00 PM AEST — after afternoon games
+    - cron: '0 10 * * 1'    #  8:00 PM AEST — catch late games
+
+    # Daily safety net
+    - cron: '0 16 * * *'    #  2:00 AM AEST — catches anything missed overnight
   workflow_dispatch:
     inputs:
       force_release:
