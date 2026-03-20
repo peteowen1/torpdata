@@ -4,11 +4,21 @@ library(dplyr)
 # Player ratings - predictive TORP ratings (career-weighted with exponential decay)
 all_ratings <- read_parquet("source/torp_ratings.parquet")
 
+# Handle old column names (torp_recv → recv_epr, etc.)
+ratings_renames <- c(torp_recv = "recv_epr", torp_disp = "disp_epr",
+                     torp_spoil = "spoil_epr", torp_hitout = "hitout_epr")
+for (old_nm in names(ratings_renames)) {
+  new_nm <- ratings_renames[[old_nm]]
+  if (old_nm %in% names(all_ratings) && !new_nm %in% names(all_ratings)) {
+    names(all_ratings)[names(all_ratings) == old_nm] <- new_nm
+  }
+}
+
 ratings <- all_ratings |>
   filter(season == max(season, na.rm = TRUE)) |>
   filter(round == max(round, na.rm = TRUE)) |>
-  select(player_id, player_name, team, position, torp, torp_recv, torp_disp,
-         torp_spoil, torp_hitout, gms, season) |>
+  select(player_id, player_name, team, position, torp, recv_epr, disp_epr,
+         spoil_epr, hitout_epr, gms, season) |>
   arrange(desc(torp))
 
 # Team ratings - most recent round of the most recent season
@@ -125,9 +135,20 @@ details <- details_raw |>
 game_files <- list.files("source", pattern = "^player_game_ratings_", full.names = TRUE)
 if (length(game_files) == 0) stop("No player_game_ratings files found in source/")
 game_raw <- lapply(game_files, read_parquet) |> bind_rows()
+# Handle both old (total_points, recv_points, ...) and new (epv_raw, recv_epv_raw, ...) column names
+col_renames <- c(
+  total_points = "epv_raw", recv_points = "recv_epv_raw", disp_points = "disp_epv_raw",
+  spoil_points = "spoil_epv_raw", hitout_points = "hitout_epv_raw"
+)
+for (old_nm in names(col_renames)) {
+  new_nm <- col_renames[[old_nm]]
+  if (old_nm %in% names(game_raw) && !new_nm %in% names(game_raw)) {
+    names(game_raw)[names(game_raw) == old_nm] <- new_nm
+  }
+}
 required_game_cols <- c("player_id", "player_name", "season", "round", "team", "opp",
-                        "total_points", "recv_points", "disp_points", "spoil_points",
-                        "hitout_points", "match_id")
+                        "epv_raw", "recv_epv_raw", "disp_epv_raw", "spoil_epv_raw",
+                        "hitout_epv_raw", "match_id")
 missing_game_cols <- setdiff(required_game_cols, names(game_raw))
 if (length(missing_game_cols) > 0) {
   stop("player_game_ratings parquets missing columns: ",
@@ -141,11 +162,11 @@ game_logs <- game_raw |>
     round,
     team,
     opp,
-    torp = total_points,
-    torp_recv = recv_points,
-    torp_disp = disp_points,
-    torp_spoil = spoil_points,
-    torp_hitout = hitout_points,
+    torp = epv_raw,
+    torp_recv = recv_epv_raw,
+    torp_disp = disp_epv_raw,
+    torp_spoil = spoil_epv_raw,
+    torp_hitout = hitout_epv_raw,
     match_id
   ) |>
   arrange(player_id, season, round)
