@@ -134,10 +134,12 @@ details <- details_raw |>
 game_files <- list.files("source", pattern = "^player_game_ratings_", full.names = TRUE)
 if (length(game_files) == 0) stop("No player_game_ratings files found in source/")
 game_raw <- lapply(game_files, read_parquet) |> bind_rows()
-# Handle both old (total_points, recv_points, ...) and new (epv_raw, recv_epv_raw, ...) column names
+# Handle column name evolution: total_points → epv_raw → epv_adj
 col_renames <- c(
   total_points = "epv_raw", recv_points = "recv_epv_raw", disp_points = "disp_epv_raw",
-  spoil_points = "spoil_epv_raw", hitout_points = "hitout_epv_raw"
+  spoil_points = "spoil_epv_raw", hitout_points = "hitout_epv_raw",
+  epv_adj = "epv_raw", recv_epv_adj = "recv_epv_raw", disp_epv_adj = "disp_epv_raw",
+  spoil_epv_adj = "spoil_epv_raw", hitout_epv_adj = "hitout_epv_raw"
 )
 for (old_nm in names(col_renames)) {
   new_nm <- col_renames[[old_nm]]
