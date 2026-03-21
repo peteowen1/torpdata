@@ -157,22 +157,25 @@ if (length(missing_game_cols) > 0) {
   stop("player_game_ratings parquets missing columns: ",
        paste(missing_game_cols, collapse = ", "))
 }
+has_psv <- "psv" %in% names(game_raw)
 game_logs <- game_raw |>
-  transmute(
-    player_id,
-    player_name,
-    season,
-    round,
-    team,
-    opp,
+  mutate(
     torp = epv,
     torp_recv = recv_epv,
     torp_disp = disp_epv,
     torp_spoil = spoil_epv,
-    torp_hitout = hitout_epv,
-    match_id
+    torp_hitout = hitout_epv
   ) |>
+  select(player_id, player_name, season, round, team, opp,
+         torp, torp_recv, torp_disp, torp_spoil, torp_hitout,
+         any_of(c("psv", "osv", "dsv")),
+         match_id) |>
   arrange(player_id, season, round)
+if (has_psv) {
+  cat("game-logs: PSV/OSV/DSV columns included\n")
+} else {
+  message("INFO: PSV/OSV/DSV not in player_game_ratings — upgrade torp to include them")
+}
 
 # Raw game stats — box-score stats for match stats toggle (optional)
 game_stat_files <- list.files("source", pattern = "^player_game_\\d{4}\\.parquet$", full.names = TRUE)
