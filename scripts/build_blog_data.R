@@ -250,6 +250,8 @@ shots <- if (length(pbp_files) == 0) {
     pbp |>
       filter(shot_at_goal == TRUE) |>
       transmute(
+        match_id,
+        team_id,
         player_id,
         season = as.integer(season),
         round_number = as.integer(round_number),
