@@ -281,6 +281,35 @@ shots <- if (length(pbp_files) == 0) {
 # Enrich predictions with match-level xScore from shots
 if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shots)) {
   tryCatch({
+    # Team name normalizer: maps any variant → prediction name format
+    # PBP uses Champion Data names ("Adelaide Crows"), predictions use TORP names ("Adelaide")
+    .norm_team <- function(x) {
+      map <- c(
+        "Adelaide Crows" = "Adelaide", "Brisbane Lions" = "Brisbane Lions",
+        "Carlton Blues" = "Carlton", "Collingwood Magpies" = "Collingwood",
+        "Essendon Bombers" = "Essendon", "Fremantle Dockers" = "Fremantle",
+        "Geelong Cats" = "Geelong", "Gold Coast Suns" = "Gold Coast",
+        "GWS Giants" = "GWS", "Greater Western Sydney Giants" = "GWS",
+        "Hawthorn Hawks" = "Hawthorn", "Melbourne Demons" = "Melbourne",
+        "North Melbourne Kangaroos" = "North Melbourne",
+        "Port Adelaide Power" = "Port Adelaide", "Richmond Tigers" = "Richmond",
+        "St Kilda Saints" = "St Kilda", "Sydney Swans" = "Sydney",
+        "West Coast Eagles" = "West Coast", "Western Bulldogs" = "Footscray",
+        # Also handle if already in pred format
+        "Adelaide" = "Adelaide", "Brisbane Lions" = "Brisbane Lions",
+        "Carlton" = "Carlton", "Collingwood" = "Collingwood",
+        "Essendon" = "Essendon", "Fremantle" = "Fremantle",
+        "Geelong" = "Geelong", "Gold Coast" = "Gold Coast",
+        "GWS" = "GWS", "Hawthorn" = "Hawthorn",
+        "Melbourne" = "Melbourne", "North Melbourne" = "North Melbourne",
+        "Port Adelaide" = "Port Adelaide", "Richmond" = "Richmond",
+        "St Kilda" = "St Kilda", "Sydney" = "Sydney",
+        "West Coast" = "West Coast", "Footscray" = "Footscray"
+      )
+      mapped <- map[x]
+      ifelse(!is.na(mapped), unname(mapped), x)
+    }
+
     # Per-match, per-team xScore totals
     team_xs <- shots |>
       filter(!is.na(xscore)) |>
@@ -288,11 +317,14 @@ if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shot
       summarise(xscore = round(sum(xscore, na.rm = TRUE), 1), .groups = "drop")
 
     # Re-read PBP to get home_team_id for home/away assignment
-    # (shots transmute dropped home_team_id to keep output lean)
     match_home <- lapply(pbp_files, function(f) {
       read_parquet(f, col_select = any_of(c("match_id", "home_team_id", "home_team_name", "away_team_name")))
     }) |> bind_rows() |>
-      distinct(match_id, home_team_id, home_team_name, away_team_name)
+      distinct(match_id, home_team_id, home_team_name, away_team_name) |>
+      mutate(
+        home_team_name = .norm_team(home_team_name),
+        away_team_name = .norm_team(away_team_name)
+      )
 
     # Tag each team's shots as home or away, pivot to one row per match
     match_xs <- team_xs |>
@@ -304,13 +336,19 @@ if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shot
                          names_from = position, values_from = xscore,
                          names_prefix = "xscore_")
 
-    # Join with predictions (both use season + round + home_team + away_team)
+    # Cast round to numeric to match predictions (which uses numeric round)
+    match_xs$round <- as.numeric(match_xs$round)
+
+    # Join with predictions
     preds <- preds |>
       select(-any_of(c("xscore_home", "xscore_away"))) |>
       left_join(match_xs, by = c("season", "round", "home_team", "away_team"))
 
     n_xs <- sum(!is.na(preds$xscore_home))
-    cat("predictions xScore enrichment:", n_xs, "/", nrow(preds), "matches\n")
+    n_miss <- nrow(preds[!is.na(preds$actual_margin) & is.na(preds$xscore_home), ])
+    cat("predictions xScore enrichment:", n_xs, "/", nrow(preds), "matches")
+    if (n_miss > 0) cat(" (", n_miss, "played matches missing xScore)")
+    cat("\n")
   }, error = function(e) {
     message("::warning::xScore enrichment failed: ", conditionMessage(e))
   })
