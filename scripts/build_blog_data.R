@@ -230,7 +230,8 @@ shots <- if (length(pbp_files) == 0) {
   NULL
 } else {
   tryCatch({
-    shot_cols <- c("player_id", "season", "round_number", "x", "y", "distance",
+    shot_cols <- c("match_id", "team_id", "home_team_id", "player_id",
+                   "season", "round_number", "x", "y", "distance",
                    "goal_prob", "behind_prob", "xscore", "points_shot",
                    "phase_of_play", "venue_length", "venue_width", "shot_at_goal")
 
@@ -274,6 +275,44 @@ shots <- if (length(pbp_files) == 0) {
     message("::warning::PBP processing failed, skipping torp_shots.parquet: ",
             conditionMessage(e))
     NULL
+  })
+}
+
+# Enrich predictions with match-level xScore from shots
+if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shots)) {
+  tryCatch({
+    # Per-match, per-team xScore totals
+    team_xs <- shots |>
+      filter(!is.na(xscore)) |>
+      group_by(match_id, team_id, season, round_number) |>
+      summarise(xscore = round(sum(xscore, na.rm = TRUE), 1), .groups = "drop")
+
+    # Re-read PBP to get home_team_id for home/away assignment
+    # (shots transmute dropped home_team_id to keep output lean)
+    match_home <- lapply(pbp_files, function(f) {
+      read_parquet(f, col_select = any_of(c("match_id", "home_team_id", "home_team_name", "away_team_name")))
+    }) |> bind_rows() |>
+      distinct(match_id, home_team_id, home_team_name, away_team_name)
+
+    # Tag each team's shots as home or away, pivot to one row per match
+    match_xs <- team_xs |>
+      inner_join(match_home, by = "match_id") |>
+      mutate(position = if_else(team_id == home_team_id, "home", "away")) |>
+      select(season, round = round_number, home_team = home_team_name,
+             away_team = away_team_name, position, xscore) |>
+      tidyr::pivot_wider(id_cols = c(season, round, home_team, away_team),
+                         names_from = position, values_from = xscore,
+                         names_prefix = "xscore_")
+
+    # Join with predictions (both use season + round + home_team + away_team)
+    preds <- preds |>
+      select(-any_of(c("xscore_home", "xscore_away"))) |>
+      left_join(match_xs, by = c("season", "round", "home_team", "away_team"))
+
+    n_xs <- sum(!is.na(preds$xscore_home))
+    cat("predictions xScore enrichment:", n_xs, "/", nrow(preds), "matches\n")
+  }, error = function(e) {
+    message("::warning::xScore enrichment failed: ", conditionMessage(e))
   })
 }
 

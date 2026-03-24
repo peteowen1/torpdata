@@ -29,6 +29,7 @@ jobs:
           packages: |
             any::arrow
             any::dplyr
+            any::tidyr
             any::data.table
             any::cli
             any::devtools
