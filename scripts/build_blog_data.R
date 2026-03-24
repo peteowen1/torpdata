@@ -78,6 +78,33 @@ preds_list <- lapply(pred_files, function(f) {
 })
 preds <- bind_rows(preds_list) |> arrange(season, round, desc(abs(pred_margin)))
 
+# Backfill with retrodictions for rounds that have no locked predictions
+retro_files <- list.files("source", pattern = "^retrodictions_", full.names = TRUE)
+if (length(retro_files) > 0) {
+  retro_list <- lapply(retro_files, function(f) {
+    season <- as.integer(sub(".*retrodictions_(\\d+)\\.parquet$", "\\1", basename(f)))
+    r <- read_parquet(f) |> ungroup()
+    if (!"week" %in% names(r)) return(NULL)
+    r |> transmute(
+      season = !!season, round = week,
+      home_team = as.character(home_team), away_team = as.character(away_team),
+      home_rating = round(home_rating, 1), away_rating = round(away_rating, 1),
+      pred_margin = round(pred_margin, 1), home_win_prob = round(pred_win, 3),
+      pred_total = round(pred_xtotal, 0), actual_margin = margin,
+      start_time = if ("start_time" %in% names(r)) start_time else NA_character_,
+      venue = if ("venue" %in% names(r)) as.character(venue) else NA_character_
+    )
+  })
+  retro <- bind_rows(retro_list)
+  # Only add retrodiction rows for season+round+home+away combos missing from predictions
+  retro_new <- retro |>
+    anti_join(preds, by = c("season", "round", "home_team", "away_team"))
+  if (nrow(retro_new) > 0) {
+    preds <- bind_rows(preds, retro_new) |> arrange(season, round, desc(abs(pred_margin)))
+    cat("Backfilled", nrow(retro_new), "matches from retrodictions\n")
+  }
+}
+
 # Normalize team names to canonical full names (e.g., "Adelaide" → "Adelaide Crows")
 if (exists("torp_replace_teams")) {
   preds$home_team <- torp_replace_teams(preds$home_team)
