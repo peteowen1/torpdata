@@ -1,6 +1,15 @@
 library(arrow)
 library(dplyr)
 
+# Load torp package for team name normalization (AFL_TEAM_ALIASES + torp_replace_teams)
+torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
+if (!is.null(torp_path)) {
+  suppressMessages(devtools::load_all(torp_path, quiet = TRUE))
+  cat("Loaded torp package from:", torp_path, "\n")
+} else {
+  warning("torp package not found — team name normalization unavailable")
+}
+
 # Player ratings - predictive TORP ratings (career-weighted with exponential decay)
 all_ratings <- read_parquet("source/torp_ratings.parquet")
 
@@ -68,6 +77,13 @@ preds_list <- lapply(pred_files, function(f) {
   }
 })
 preds <- bind_rows(preds_list) |> arrange(season, round, desc(abs(pred_margin)))
+
+# Normalize team names to canonical full names (e.g., "Adelaide" → "Adelaide Crows")
+if (exists("torp_replace_teams")) {
+  preds$home_team <- torp_replace_teams(preds$home_team)
+  preds$away_team <- torp_replace_teams(preds$away_team)
+  cat("Team names normalized:", paste(sort(unique(preds$home_team)), collapse = ", "), "\n")
+}
 
 # Player details - bio data for player profile pages
 details_file <- list.files("source", pattern = "^player_details_", full.names = TRUE)
@@ -281,35 +297,6 @@ shots <- if (length(pbp_files) == 0) {
 # Enrich predictions with match-level xScore from shots
 if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shots)) {
   tryCatch({
-    # Team name normalizer: maps any variant → prediction name format
-    # PBP uses Champion Data names ("Adelaide Crows"), predictions use TORP names ("Adelaide")
-    .norm_team <- function(x) {
-      map <- c(
-        "Adelaide Crows" = "Adelaide", "Brisbane Lions" = "Brisbane Lions",
-        "Carlton Blues" = "Carlton", "Collingwood Magpies" = "Collingwood",
-        "Essendon Bombers" = "Essendon", "Fremantle Dockers" = "Fremantle",
-        "Geelong Cats" = "Geelong", "Gold Coast Suns" = "Gold Coast",
-        "GWS Giants" = "GWS", "Greater Western Sydney Giants" = "GWS",
-        "Hawthorn Hawks" = "Hawthorn", "Melbourne Demons" = "Melbourne",
-        "North Melbourne Kangaroos" = "North Melbourne",
-        "Port Adelaide Power" = "Port Adelaide", "Richmond Tigers" = "Richmond",
-        "St Kilda Saints" = "St Kilda", "Sydney Swans" = "Sydney",
-        "West Coast Eagles" = "West Coast", "Western Bulldogs" = "Footscray",
-        # Also handle if already in pred format
-        "Adelaide" = "Adelaide", "Brisbane Lions" = "Brisbane Lions",
-        "Carlton" = "Carlton", "Collingwood" = "Collingwood",
-        "Essendon" = "Essendon", "Fremantle" = "Fremantle",
-        "Geelong" = "Geelong", "Gold Coast" = "Gold Coast",
-        "GWS" = "GWS", "Hawthorn" = "Hawthorn",
-        "Melbourne" = "Melbourne", "North Melbourne" = "North Melbourne",
-        "Port Adelaide" = "Port Adelaide", "Richmond" = "Richmond",
-        "St Kilda" = "St Kilda", "Sydney" = "Sydney",
-        "West Coast" = "West Coast", "Footscray" = "Footscray"
-      )
-      mapped <- map[x]
-      ifelse(!is.na(mapped), unname(mapped), x)
-    }
-
     # Per-match, per-team xScore totals
     team_xs <- shots |>
       filter(!is.na(xscore)) |>
@@ -322,8 +309,8 @@ if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shot
     }) |> bind_rows() |>
       distinct(match_id, home_team_id, home_team_name, away_team_name) |>
       mutate(
-        home_team_name = .norm_team(home_team_name),
-        away_team_name = .norm_team(away_team_name)
+        home_team_name = if (exists("torp_replace_teams")) torp_replace_teams(home_team_name) else home_team_name,
+        away_team_name = if (exists("torp_replace_teams")) torp_replace_teams(away_team_name) else away_team_name
       )
 
     # Tag each team's shots as home or away, pivot to one row per match
