@@ -43,7 +43,8 @@ preds_list <- lapply(pred_files, function(f) {
   season <- as.integer(sub(".*predictions_(\\d+)\\.parquet$", "\\1", basename(f)))
   pred_raw <- read_parquet(f) |> ungroup()
 
-  if ("week" %in% names(pred_raw)) {
+  if ("week" %in% names(pred_raw) && "pred_margin" %in% names(pred_raw)) {
+    # Legacy format (2025): flat table with week, pred_margin, pred_xtotal
     pred_raw |>
       transmute(
         season = !!season,
@@ -59,7 +60,8 @@ preds_list <- lapply(pred_files, function(f) {
         start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
         venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_
       )
-  } else {
+  } else if ("team_type" %in% names(pred_raw) && "pred_score_diff" %in% names(pred_raw)) {
+    # Current format (2026+): pivoted table with team_type, pred_score_diff
     pred_raw |>
       filter(team_type == "home") |>
       transmute(
@@ -74,6 +76,10 @@ preds_list <- lapply(pred_files, function(f) {
         pred_total = round(pred_tot_xscore, 0),
         actual_margin = score_diff
       )
+  } else {
+    warning("Unrecognized predictions format in ", basename(f),
+            " — columns: ", paste(head(names(pred_raw), 10), collapse = ", "))
+    NULL
   }
 })
 preds <- bind_rows(preds_list) |> arrange(season, round, desc(abs(pred_margin)))
@@ -579,25 +585,10 @@ if (!is.null(torp_path)) {
   }
   setnames(pos_dist, pos_cols, paste0("pos_", pos_cols, "_pct"))
 
-  # Normalize sim team names (short) → full AFL names (matching torp_ratings.parquet)
-  full_names <- c(
-    Adelaide = "Adelaide Crows", `Brisbane Lions` = "Brisbane Lions",
-    Carlton = "Carlton", Collingwood = "Collingwood", Essendon = "Essendon",
-    Fremantle = "Fremantle", Geelong = "Geelong Cats",
-    `Gold Coast` = "Gold Coast SUNS", GWS = "GWS GIANTS",
-    Hawthorn = "Hawthorn", Melbourne = "Melbourne",
-    `North Melbourne` = "North Melbourne", `Port Adelaide` = "Port Adelaide",
-    Richmond = "Richmond", `St Kilda` = "St Kilda",
-    Sydney = "Sydney Swans", `West Coast` = "West Coast Eagles",
-    Footscray = "Western Bulldogs"
-  )
-  norm_team <- function(x) {
-    mapped <- full_names[x]
-    ifelse(is.na(mapped), x, mapped)
-  }
-  summary_dt[, team := norm_team(team)]
-  finals_stage[, team := norm_team(team)]
-  pos_dist[, team := norm_team(team)]
+  # Normalize sim team names → canonical full names (matching torp_ratings.parquet)
+  summary_dt[, team := torp_replace_teams(team)]
+  finals_stage[, team := torp_replace_teams(team)]
+  pos_dist[, team := torp_replace_teams(team)]
 
   # Current standings from internal AFL API (pre-season = zeros)
   current <- tryCatch({
