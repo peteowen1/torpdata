@@ -1,6 +1,15 @@
 library(arrow)
 library(dplyr)
 
+# Load torp package for team name normalization (AFL_TEAM_ALIASES + torp_replace_teams)
+torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
+if (!is.null(torp_path)) {
+  suppressMessages(devtools::load_all(torp_path, quiet = TRUE))
+  cat("Loaded torp package from:", torp_path, "\n")
+} else {
+  warning("torp package not found — team name normalization unavailable")
+}
+
 # Player ratings - predictive TORP ratings (career-weighted with exponential decay)
 all_ratings <- read_parquet("source/torp_ratings.parquet")
 
@@ -34,7 +43,8 @@ preds_list <- lapply(pred_files, function(f) {
   season <- as.integer(sub(".*predictions_(\\d+)\\.parquet$", "\\1", basename(f)))
   pred_raw <- read_parquet(f) |> ungroup()
 
-  if ("week" %in% names(pred_raw)) {
+  if ("week" %in% names(pred_raw) && "pred_margin" %in% names(pred_raw)) {
+    # Legacy format (2025): flat table with week, pred_margin, pred_xtotal
     pred_raw |>
       transmute(
         season = !!season,
@@ -50,7 +60,8 @@ preds_list <- lapply(pred_files, function(f) {
         start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
         venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_
       )
-  } else {
+  } else if ("team_type" %in% names(pred_raw) && "pred_score_diff" %in% names(pred_raw)) {
+    # Current format (2026+): pivoted table with team_type, pred_score_diff
     pred_raw |>
       filter(team_type == "home") |>
       transmute(
@@ -63,11 +74,53 @@ preds_list <- lapply(pred_files, function(f) {
         pred_margin = round(pred_score_diff, 1),
         home_win_prob = round(pred_win, 3),
         pred_total = round(pred_tot_xscore, 0),
-        actual_margin = score_diff
+        actual_margin = score_diff,
+        start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
+        venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_
       )
+  } else {
+    warning("Unrecognized predictions format in ", basename(f),
+            " — columns: ", paste(head(names(pred_raw), 10), collapse = ", "))
+    NULL
   }
 })
-preds <- bind_rows(preds_list) |> arrange(season, round, desc(abs(pred_margin)))
+preds <- bind_rows(preds_list) |>
+  mutate(round = as.integer(round)) |>
+  arrange(season, round, desc(abs(pred_margin)))
+
+# Backfill with retrodictions for rounds that have no locked predictions
+retro_files <- list.files("source", pattern = "^retrodictions_", full.names = TRUE)
+if (length(retro_files) > 0) {
+  retro_list <- lapply(retro_files, function(f) {
+    season <- as.integer(sub(".*retrodictions_(\\d+)\\.parquet$", "\\1", basename(f)))
+    r <- read_parquet(f) |> ungroup()
+    if (!"week" %in% names(r)) return(NULL)
+    r |> transmute(
+      season = !!season, round = week,
+      home_team = as.character(home_team), away_team = as.character(away_team),
+      home_rating = round(home_rating, 1), away_rating = round(away_rating, 1),
+      pred_margin = round(pred_margin, 1), home_win_prob = round(pred_win, 3),
+      pred_total = round(pred_xtotal, 0), actual_margin = margin,
+      start_time = if ("start_time" %in% names(r)) start_time else NA_character_,
+      venue = if ("venue" %in% names(r)) as.character(venue) else NA_character_
+    )
+  })
+  retro <- bind_rows(retro_list)
+  # Only add retrodiction rows for season+round+home+away combos missing from predictions
+  retro_new <- retro |>
+    anti_join(preds, by = c("season", "round", "home_team", "away_team"))
+  if (nrow(retro_new) > 0) {
+    preds <- bind_rows(preds, retro_new) |> arrange(season, round, desc(abs(pred_margin)))
+    cat("Backfilled", nrow(retro_new), "matches from retrodictions\n")
+  }
+}
+
+# Normalize team names to canonical full names (e.g., "Adelaide" → "Adelaide Crows")
+if (exists("torp_replace_teams")) {
+  preds$home_team <- torp_replace_teams(preds$home_team)
+  preds$away_team <- torp_replace_teams(preds$away_team)
+  cat("Team names normalized:", paste(sort(unique(preds$home_team)), collapse = ", "), "\n")
+}
 
 # Player details - bio data for player profile pages
 details_file <- list.files("source", pattern = "^player_details_", full.names = TRUE)
@@ -230,7 +283,10 @@ shots <- if (length(pbp_files) == 0) {
   NULL
 } else {
   tryCatch({
-    shot_cols <- c("player_id", "season", "round_number", "x", "y", "distance",
+    shot_cols <- c("match_id", "team_id", "home_team_id",
+                   "home_team_name", "away_team_name",
+                   "player_id", "season", "round_number",
+                   "x", "y", "distance",
                    "goal_prob", "behind_prob", "xscore", "points_shot",
                    "phase_of_play", "venue_length", "venue_width", "shot_at_goal")
 
@@ -247,9 +303,22 @@ shots <- if (length(pbp_files) == 0) {
     #   1L = goal (6 pts)
     #   0L = behind or rushed behind (1 pt — includes both scored and rushedOpp)
     #  -1L = miss or other (0 pts)
+    # Extract match-level home/away mapping before filtering to shots (for xScore enrichment)
+    # One row per match — use distinct on match_id to prevent fan-out from NA home_team_id
+    .pbp_match_home <<- pbp |>
+      filter(!is.na(home_team_id)) |>
+      distinct(match_id, .keep_all = TRUE) |>
+      select(match_id, home_team_id, home_team_name, away_team_name) |>
+      mutate(
+        home_team_name = if (exists("torp_replace_teams")) torp_replace_teams(home_team_name) else home_team_name,
+        away_team_name = if (exists("torp_replace_teams")) torp_replace_teams(away_team_name) else away_team_name
+      )
+
     pbp |>
       filter(shot_at_goal == TRUE) |>
       transmute(
+        match_id,
+        team_id,
         player_id,
         season = as.integer(season),
         round_number = as.integer(round_number),
@@ -272,6 +341,46 @@ shots <- if (length(pbp_files) == 0) {
     message("::warning::PBP processing failed, skipping torp_shots.parquet: ",
             conditionMessage(e))
     NULL
+  })
+}
+
+# Enrich predictions with match-level xScore from shots
+if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shots)) {
+  tryCatch({
+    # Per-match, per-team xScore totals
+    team_xs <- shots |>
+      filter(!is.na(xscore)) |>
+      group_by(match_id, team_id, season, round_number) |>
+      summarise(xscore = round(sum(xscore, na.rm = TRUE), 1), .groups = "drop")
+
+    # Use pre-extracted match_home from PBP read (avoids re-reading large files)
+    match_home <- .pbp_match_home
+
+    # Tag each team's shots as home or away, pivot to one row per match
+    match_xs <- team_xs |>
+      inner_join(match_home, by = "match_id") |>
+      mutate(position = if_else(team_id == home_team_id, "home", "away")) |>
+      select(season, round = round_number, home_team = home_team_name,
+             away_team = away_team_name, position, xscore) |>
+      tidyr::pivot_wider(id_cols = c(season, round, home_team, away_team),
+                         names_from = position, values_from = xscore,
+                         names_prefix = "xscore_")
+
+    # Cast round to integer to match predictions
+    match_xs$round <- as.integer(match_xs$round)
+
+    # Join with predictions
+    preds <- preds |>
+      select(-any_of(c("xscore_home", "xscore_away"))) |>
+      left_join(match_xs, by = c("season", "round", "home_team", "away_team"))
+
+    n_xs <- sum(!is.na(preds$xscore_home))
+    n_miss <- nrow(preds[!is.na(preds$actual_margin) & is.na(preds$xscore_home), ])
+    cat("predictions xScore enrichment:", n_xs, "/", nrow(preds), "matches")
+    if (n_miss > 0) cat(" (", n_miss, "played matches missing xScore)")
+    cat("\n")
+  }, error = function(e) {
+    message("::warning::xScore enrichment failed: ", conditionMessage(e))
   })
 }
 
@@ -414,12 +523,45 @@ if (!is.null(game_stats)) {
   cat("game-stats:", nrow(game_stats), "game stat records\n")
 }
 
+# Fixtures history — venue/date/scores for all seasons (blog stats filters)
+fixtures_files <- list.files("source", pattern = "^fixtures_", full.names = TRUE)
+if (length(fixtures_files) > 0) {
+  tryCatch({
+    fixtures_raw <- lapply(fixtures_files, read_parquet) |> dplyr::bind_rows()
+    # Team/venue names in fixtures_*.parquet are already normalized at scrape time
+    # by load_fixtures() → .normalise_fixture_columns() in torp package.
+    # Use torp_replace_teams/venues if available, otherwise trust source names.
+    norm_team  <- if (exists("torp_replace_teams"))  torp_replace_teams  else identity
+    norm_venue <- if (exists("torp_replace_venues")) torp_replace_venues else identity
+    fixtures_blog <- fixtures_raw |>
+      dplyr::filter(!is.na(round_number)) |>
+      dplyr::transmute(
+        match_id    = match_id,
+        season      = as.integer(season),
+        round       = as.integer(round_number),
+        home_team   = norm_team(home_team_name),
+        away_team   = norm_team(away_team_name),
+        venue       = if ("venue_name" %in% names(fixtures_raw)) norm_venue(venue_name) else NA_character_,
+        start_time  = if ("utc_start_time" %in% names(fixtures_raw)) utc_start_time else NA_character_,
+        home_score  = as.integer(home_score),
+        away_score  = as.integer(away_score),
+        status      = status
+      ) |>
+      dplyr::arrange(season, round)
+    write_parquet(fixtures_blog, "blog/fixtures-history.parquet")
+    cat("fixtures-history:", nrow(fixtures_blog), "matches\n")
+  }, error = function(e) {
+    message("WARNING: Fixtures processing failed, skipping: ", conditionMessage(e))
+  })
+} else {
+  message("INFO: No fixtures files in source/ — skipping fixtures-history.parquet")
+}
+
 # Season simulations — Monte Carlo projections (depends on torp package)
 # Everything inside tryCatch so missing deps do not block the rest of the pipeline.
-torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
-if (!is.null(torp_path)) {
+# torp is already loaded at the top of the script (line 5-11) — skip redundant load_all
+if (exists("torp_replace_teams")) {
   tryCatch({
-  devtools::load_all(torp_path, quiet = TRUE)
   library(data.table)
 
   current_season <- max(preds$season, na.rm = TRUE)
@@ -486,25 +628,10 @@ if (!is.null(torp_path)) {
   }
   setnames(pos_dist, pos_cols, paste0("pos_", pos_cols, "_pct"))
 
-  # Normalize sim team names (short) → full AFL names (matching torp_ratings.parquet)
-  full_names <- c(
-    Adelaide = "Adelaide Crows", `Brisbane Lions` = "Brisbane Lions",
-    Carlton = "Carlton", Collingwood = "Collingwood", Essendon = "Essendon",
-    Fremantle = "Fremantle", Geelong = "Geelong Cats",
-    `Gold Coast` = "Gold Coast SUNS", GWS = "GWS GIANTS",
-    Hawthorn = "Hawthorn", Melbourne = "Melbourne",
-    `North Melbourne` = "North Melbourne", `Port Adelaide` = "Port Adelaide",
-    Richmond = "Richmond", `St Kilda` = "St Kilda",
-    Sydney = "Sydney Swans", `West Coast` = "West Coast Eagles",
-    Footscray = "Western Bulldogs"
-  )
-  norm_team <- function(x) {
-    mapped <- full_names[x]
-    ifelse(is.na(mapped), x, mapped)
-  }
-  summary_dt[, team := norm_team(team)]
-  finals_stage[, team := norm_team(team)]
-  pos_dist[, team := norm_team(team)]
+  # Normalize sim team names → canonical full names (matching torp_ratings.parquet)
+  summary_dt[, team := torp_replace_teams(team)]
+  finals_stage[, team := torp_replace_teams(team)]
+  pos_dist[, team := torp_replace_teams(team)]
 
   # Current standings from internal AFL API (pre-season = zeros)
   current <- tryCatch({
