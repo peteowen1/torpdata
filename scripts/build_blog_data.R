@@ -518,15 +518,20 @@ fixtures_files <- list.files("source", pattern = "^fixtures_", full.names = TRUE
 if (length(fixtures_files) > 0) {
   tryCatch({
     fixtures_raw <- lapply(fixtures_files, read_parquet) |> dplyr::bind_rows()
+    # Team/venue names in fixtures_*.parquet are already normalized at scrape time
+    # by load_fixtures() → .normalise_fixture_columns() in torp package.
+    # Use torp_replace_teams/venues if available, otherwise trust source names.
+    norm_team  <- if (exists("torp_replace_teams"))  torp_replace_teams  else identity
+    norm_venue <- if (exists("torp_replace_venues")) torp_replace_venues else identity
     fixtures_blog <- fixtures_raw |>
       dplyr::filter(!is.na(round_number)) |>
       dplyr::transmute(
         match_id    = match_id,
         season      = as.integer(season),
         round       = as.integer(round_number),
-        home_team   = torp_replace_teams(home_team_name),
-        away_team   = torp_replace_teams(away_team_name),
-        venue       = if ("venue_name" %in% names(fixtures_raw)) torp_replace_venues(venue_name) else NA_character_,
+        home_team   = norm_team(home_team_name),
+        away_team   = norm_team(away_team_name),
+        venue       = if ("venue_name" %in% names(fixtures_raw)) norm_venue(venue_name) else NA_character_,
         start_time  = utc_start_time,
         home_score  = as.integer(home_score),
         away_score  = as.integer(away_score),
