@@ -74,7 +74,9 @@ preds_list <- lapply(pred_files, function(f) {
         pred_margin = round(pred_score_diff, 1),
         home_win_prob = round(pred_win, 3),
         pred_total = round(pred_tot_xscore, 0),
-        actual_margin = score_diff
+        actual_margin = score_diff,
+        start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
+        venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_
       )
   } else {
     warning("Unrecognized predictions format in ", basename(f),
@@ -82,7 +84,9 @@ preds_list <- lapply(pred_files, function(f) {
     NULL
   }
 })
-preds <- bind_rows(preds_list) |> arrange(season, round, desc(abs(pred_margin)))
+preds <- bind_rows(preds_list) |>
+  mutate(round = as.integer(round)) |>
+  arrange(season, round, desc(abs(pred_margin)))
 
 # Backfill with retrodictions for rounds that have no locked predictions
 retro_files <- list.files("source", pattern = "^retrodictions_", full.names = TRUE)
@@ -279,8 +283,10 @@ shots <- if (length(pbp_files) == 0) {
   NULL
 } else {
   tryCatch({
-    shot_cols <- c("match_id", "team_id", "home_team_id", "player_id",
-                   "season", "round_number", "x", "y", "distance",
+    shot_cols <- c("match_id", "team_id", "home_team_id",
+                   "home_team_name", "away_team_name",
+                   "player_id", "season", "round_number",
+                   "x", "y", "distance",
                    "goal_prob", "behind_prob", "xscore", "points_shot",
                    "phase_of_play", "venue_length", "venue_width", "shot_at_goal")
 
@@ -297,6 +303,17 @@ shots <- if (length(pbp_files) == 0) {
     #   1L = goal (6 pts)
     #   0L = behind or rushed behind (1 pt — includes both scored and rushedOpp)
     #  -1L = miss or other (0 pts)
+    # Extract match-level home/away mapping before filtering to shots (for xScore enrichment)
+    # One row per match — use distinct on match_id to prevent fan-out from NA home_team_id
+    .pbp_match_home <<- pbp |>
+      filter(!is.na(home_team_id)) |>
+      distinct(match_id, .keep_all = TRUE) |>
+      select(match_id, home_team_id, home_team_name, away_team_name) |>
+      mutate(
+        home_team_name = if (exists("torp_replace_teams")) torp_replace_teams(home_team_name) else home_team_name,
+        away_team_name = if (exists("torp_replace_teams")) torp_replace_teams(away_team_name) else away_team_name
+      )
+
     pbp |>
       filter(shot_at_goal == TRUE) |>
       transmute(
@@ -336,15 +353,8 @@ if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shot
       group_by(match_id, team_id, season, round_number) |>
       summarise(xscore = round(sum(xscore, na.rm = TRUE), 1), .groups = "drop")
 
-    # Re-read PBP to get home_team_id for home/away assignment
-    match_home <- lapply(pbp_files, function(f) {
-      read_parquet(f, col_select = any_of(c("match_id", "home_team_id", "home_team_name", "away_team_name")))
-    }) |> bind_rows() |>
-      distinct(match_id, home_team_id, home_team_name, away_team_name) |>
-      mutate(
-        home_team_name = if (exists("torp_replace_teams")) torp_replace_teams(home_team_name) else home_team_name,
-        away_team_name = if (exists("torp_replace_teams")) torp_replace_teams(away_team_name) else away_team_name
-      )
+    # Use pre-extracted match_home from PBP read (avoids re-reading large files)
+    match_home <- .pbp_match_home
 
     # Tag each team's shots as home or away, pivot to one row per match
     match_xs <- team_xs |>
@@ -356,8 +366,8 @@ if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shot
                          names_from = position, values_from = xscore,
                          names_prefix = "xscore_")
 
-    # Cast round to numeric to match predictions (which uses numeric round)
-    match_xs$round <- as.numeric(match_xs$round)
+    # Cast round to integer to match predictions
+    match_xs$round <- as.integer(match_xs$round)
 
     # Join with predictions
     preds <- preds |>
@@ -532,7 +542,7 @@ if (length(fixtures_files) > 0) {
         home_team   = norm_team(home_team_name),
         away_team   = norm_team(away_team_name),
         venue       = if ("venue_name" %in% names(fixtures_raw)) norm_venue(venue_name) else NA_character_,
-        start_time  = utc_start_time,
+        start_time  = if ("utc_start_time" %in% names(fixtures_raw)) utc_start_time else NA_character_,
         home_score  = as.integer(home_score),
         away_score  = as.integer(away_score),
         status      = status
@@ -549,10 +559,9 @@ if (length(fixtures_files) > 0) {
 
 # Season simulations — Monte Carlo projections (depends on torp package)
 # Everything inside tryCatch so missing deps do not block the rest of the pipeline.
-torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
-if (!is.null(torp_path)) {
+# torp is already loaded at the top of the script (line 5-11) — skip redundant load_all
+if (exists("torp_replace_teams")) {
   tryCatch({
-  devtools::load_all(torp_path, quiet = TRUE)
   library(data.table)
 
   current_season <- max(preds$season, na.rm = TRUE)
