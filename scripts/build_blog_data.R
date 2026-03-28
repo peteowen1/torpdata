@@ -2,10 +2,16 @@ library(arrow)
 library(dplyr)
 
 # Load torp package for team name normalization (AFL_TEAM_ALIASES + torp_replace_teams)
+# Wrapped in tryCatch — missing deps (ggplot2, httr, lubridate) shouldn't block the pipeline
 torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
 if (!is.null(torp_path)) {
-  suppressMessages(devtools::load_all(torp_path, quiet = TRUE))
-  cat("Loaded torp package from:", torp_path, "\n")
+  tryCatch({
+    suppressMessages(devtools::load_all(torp_path, quiet = TRUE))
+    cat("Loaded torp package from:", torp_path, "\n")
+  }, error = function(e) {
+    message("WARNING: Could not load torp package: ", conditionMessage(e))
+    message("Team name normalization and simulations will be skipped")
+  })
 } else {
   warning("torp package not found — team name normalization unavailable")
 }
