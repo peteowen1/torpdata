@@ -116,6 +116,14 @@ jobs:
             echo "::warning::No raw game stats available, match stats toggle will be skipped"
           fi
 
+          # Fixtures (all seasons — for venue/date on blog stats pages)
+          if gh release download fixtures-data -p "fixtures_*.parquet" -D source; then
+            count=$(ls source/fixtures_*.parquet 2>/dev/null | wc -l)
+            echo "Downloaded fixtures: ${count} files"
+          else
+            echo "::warning::No fixtures data available — fixtures-history will be skipped"
+          fi
+
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
 

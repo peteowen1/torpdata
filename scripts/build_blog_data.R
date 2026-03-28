@@ -513,6 +513,35 @@ if (!is.null(game_stats)) {
   cat("game-stats:", nrow(game_stats), "game stat records\n")
 }
 
+# Fixtures history — venue/date/scores for all seasons (blog stats filters)
+fixtures_files <- list.files("source", pattern = "^fixtures_", full.names = TRUE)
+if (length(fixtures_files) > 0) {
+  tryCatch({
+    fixtures_raw <- lapply(fixtures_files, read_parquet) |> dplyr::bind_rows()
+    fixtures_blog <- fixtures_raw |>
+      dplyr::filter(!is.na(round_number)) |>
+      dplyr::transmute(
+        match_id    = match_id,
+        season      = as.integer(season),
+        round       = as.integer(round_number),
+        home_team   = torp_replace_teams(home_team_name),
+        away_team   = torp_replace_teams(away_team_name),
+        venue       = if ("venue_name" %in% names(fixtures_raw)) torp_replace_venues(venue_name) else NA_character_,
+        start_time  = utc_start_time,
+        home_score  = as.integer(home_score),
+        away_score  = as.integer(away_score),
+        status      = status
+      ) |>
+      dplyr::arrange(season, round)
+    write_parquet(fixtures_blog, "blog/fixtures-history.parquet")
+    cat("fixtures-history:", nrow(fixtures_blog), "matches\n")
+  }, error = function(e) {
+    message("WARNING: Fixtures processing failed, skipping: ", conditionMessage(e))
+  })
+} else {
+  message("INFO: No fixtures files in source/ — skipping fixtures-history.parquet")
+}
+
 # Season simulations — Monte Carlo projections (depends on torp package)
 # Everything inside tryCatch so missing deps do not block the rest of the pipeline.
 torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
