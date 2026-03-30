@@ -44,6 +44,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: daily-release
+  cancel-in-progress: true
+
 env:
   GITHUB_PAT: ${{ secrets.WORKFLOW_PAT }}
   R_KEEP_PKG_SOURCE: yes
@@ -51,6 +55,7 @@ env:
 jobs:
   release-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     permissions:
       contents: write
@@ -117,8 +122,9 @@ jobs:
       - name: Verify release uploads
         if: steps.daily_release.outputs.release_done == 'true'
         id: verify_release
+        working-directory: torp
         run: |
-          SEASON=$(date +%Y)
+          SEASON=$(Rscript -e "devtools::load_all(); cat(get_afl_season())")
           RELEASE_MODE="${{ steps.daily_release.outputs.release_mode }}"
           MAX_AGE_HOURS=24
 
