@@ -227,6 +227,7 @@ game_logs <- game_raw |>
   ) |>
   select(player_id, player_name, season, round, team, opp,
          torp, torp_recv, torp_disp, torp_spoil, torp_hitout,
+         any_of(c("wp_credit", "wp_disp_credit", "wp_recv_credit")),
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
   arrange(player_id, season, round)
@@ -234,6 +235,11 @@ if (has_psv) {
   cat("game-logs: PSV/OSV/DSV columns included\n")
 } else {
   message("INFO: PSV/OSV/DSV not in player_game_ratings — upgrade torp to include them")
+}
+if ("wp_credit" %in% names(game_raw)) {
+  cat("game-logs: WPA credit columns included\n")
+} else {
+  message("INFO: WPA credit not in player_game_ratings — upgrade torp to include them")
 }
 
 # Raw game stats — box-score stats for match stats toggle (optional)
