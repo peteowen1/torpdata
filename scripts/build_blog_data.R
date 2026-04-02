@@ -455,7 +455,7 @@ if (length(pbp_files) > 0) {
     chain_cols <- c("match_id", "chain_number", "display_order", "player_id",
                     "player_name_given_name", "player_name_surname",
                     "team_id", "home_team_id", "home_team_name", "away_team_name",
-                    "x", "y", "description", "delta_epv", "disposal",
+                    "x", "y", "description", "delta_epv", "wpa", "disposal",
                     "final_state", "initial_state", "period", "period_seconds",
                     "shot_at_goal", "season", "round_number",
                     "venue_length", "venue_width")
@@ -483,6 +483,7 @@ if (length(pbp_files) > 0) {
           y = round(y, 1),
           description,
           delta_epv = round(delta_epv, 4),
+          wpa = round(wpa, 4),
           disposal = as.character(disposal),
           final_state,
           initial_state,
