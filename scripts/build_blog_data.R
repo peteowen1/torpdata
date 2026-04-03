@@ -51,14 +51,18 @@ preds_list <- lapply(pred_files, function(f) {
 
   if ("week" %in% names(pred_raw) && "pred_margin" %in% names(pred_raw)) {
     # Legacy format (2025): flat table with week, pred_margin, pred_xtotal
+    # Handle column rename: home_rating → home_epr (torp v2026+)
+    if ("home_rating" %in% names(pred_raw) && !"home_epr" %in% names(pred_raw)) {
+      pred_raw <- pred_raw |> rename(home_epr = home_rating, away_epr = away_rating)
+    }
     pred_raw |>
       transmute(
         season = !!season,
         round = week,
         home_team = as.character(home_team),
         away_team = as.character(away_team),
-        home_rating = round(home_epr, 1),
-        away_rating = round(away_epr, 1),
+        home_epr = round(home_epr, 1),
+        away_epr = round(away_epr, 1),
         pred_margin = round(pred_margin, 1),
         home_win_prob = round(pred_win, 3),
         pred_total = round(pred_xtotal, 0),
@@ -75,8 +79,8 @@ preds_list <- lapply(pred_files, function(f) {
         round = round.roundNumber.x,
         home_team = as.character(home_team),
         away_team = as.character(away_team),
-        home_rating = round(torp.x, 1),
-        away_rating = round(torp.y, 1),
+        home_epr = round(torp.x, 1),
+        away_epr = round(torp.y, 1),
         pred_margin = round(pred_score_diff, 1),
         home_win_prob = round(pred_win, 3),
         pred_total = round(pred_tot_xscore, 0),
@@ -101,10 +105,13 @@ if (length(retro_files) > 0) {
     season <- as.integer(sub(".*retrodictions_(\\d+)\\.parquet$", "\\1", basename(f)))
     r <- read_parquet(f) |> ungroup()
     if (!"week" %in% names(r)) return(NULL)
+    if ("home_rating" %in% names(r) && !"home_epr" %in% names(r)) {
+      r <- r |> rename(home_epr = home_rating, away_epr = away_rating)
+    }
     r |> transmute(
       season = !!season, round = week,
       home_team = as.character(home_team), away_team = as.character(away_team),
-      home_rating = round(home_epr, 1), away_rating = round(away_epr, 1),
+      home_epr = round(home_epr, 1), away_epr = round(away_epr, 1),
       pred_margin = round(pred_margin, 1), home_win_prob = round(pred_win, 3),
       pred_total = round(pred_xtotal, 0), actual_margin = margin,
       start_time = if ("start_time" %in% names(r)) start_time else NA_character_,
