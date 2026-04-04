@@ -51,6 +51,10 @@ preds_list <- lapply(pred_files, function(f) {
 
   if ("week" %in% names(pred_raw) && "pred_margin" %in% names(pred_raw)) {
     # Legacy format (2025): flat table with week, pred_margin, pred_xtotal
+    # Handle column rename: home_rating → home_epr (torp v2026+)
+    if ("home_rating" %in% names(pred_raw) && !"home_epr" %in% names(pred_raw)) {
+      pred_raw <- pred_raw |> rename(home_epr = home_rating, away_epr = away_rating)
+    }
     pred_raw |>
       transmute(
         season = !!season,
@@ -101,6 +105,9 @@ if (length(retro_files) > 0) {
     season <- as.integer(sub(".*retrodictions_(\\d+)\\.parquet$", "\\1", basename(f)))
     r <- read_parquet(f) |> ungroup()
     if (!"week" %in% names(r)) return(NULL)
+    if ("home_rating" %in% names(r) && !"home_epr" %in% names(r)) {
+      r <- r |> rename(home_epr = home_rating, away_epr = away_rating)
+    }
     r |> transmute(
       season = !!season, round = week,
       home_team = as.character(home_team), away_team = as.character(away_team),
