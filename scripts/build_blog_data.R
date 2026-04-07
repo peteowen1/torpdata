@@ -322,7 +322,7 @@ shots <- if (length(pbp_files) == 0) {
     #  -1L = miss or other (0 pts)
     # Extract match-level home/away mapping before filtering to shots (for xScore enrichment)
     # One row per match — use distinct on match_id to prevent fan-out from NA home_team_id
-    .pbp_match_home <<- pbp |>
+    pbp_match_home <- pbp |>
       filter(!is.na(home_team_id)) |>
       distinct(match_id, .keep_all = TRUE) |>
       select(match_id, home_team_id, home_team_name, away_team_name) |>
@@ -371,7 +371,7 @@ if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shot
       summarise(xscore = round(sum(xscore, na.rm = TRUE), 1), .groups = "drop")
 
     # Use pre-extracted match_home from PBP read (avoids re-reading large files)
-    match_home <- .pbp_match_home
+    match_home <- pbp_match_home
 
     # Tag each team's shots as home or away, pivot to one row per match
     match_xs <- team_xs |>
@@ -462,7 +462,7 @@ if (length(pbp_files) > 0) {
     chain_cols <- c("match_id", "chain_number", "display_order", "player_id",
                     "player_name_given_name", "player_name_surname",
                     "team_id", "home_team_id", "home_team_name", "away_team_name",
-                    "x", "y", "description", "delta_epv", "disposal",
+                    "x", "y", "description", "delta_epv", "wpa", "disposal",
                     "final_state", "initial_state", "period", "period_seconds",
                     "shot_at_goal", "season", "round_number",
                     "venue_length", "venue_width")
@@ -490,6 +490,7 @@ if (length(pbp_files) > 0) {
           y = round(y, 1),
           description,
           delta_epv = round(delta_epv, 4),
+          wpa = round(wpa, 4),
           disposal = as.character(disposal),
           final_state,
           initial_state,
