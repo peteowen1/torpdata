@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Checkout torp package (for simulations)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: peteowen1/torp
           path: torp
