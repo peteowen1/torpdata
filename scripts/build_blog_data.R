@@ -3,17 +3,19 @@ library(dplyr)
 
 # Load torp package for team name normalization (AFL_TEAM_ALIASES + torp_replace_teams)
 # Wrapped in tryCatch — missing deps (ggplot2, httr, lubridate) shouldn't block the pipeline
+torp_loaded <- FALSE
 torp_path <- if (dir.exists("../torp")) "../torp" else if (dir.exists("torp")) "torp" else NULL
 if (!is.null(torp_path)) {
   tryCatch({
     suppressMessages(devtools::load_all(torp_path, quiet = TRUE))
+    torp_loaded <- TRUE
     cat("Loaded torp package from:", torp_path, "\n")
   }, error = function(e) {
-    message("WARNING: Could not load torp package: ", conditionMessage(e))
-    message("Team name normalization and simulations will be skipped")
+    message("::warning::Could not load torp package: ", conditionMessage(e))
+    message("::warning::Team name normalization and simulations will be skipped")
   })
 } else {
-  warning("torp package not found — team name normalization unavailable")
+  message("::warning::torp package not found — team name normalization unavailable")
 }
 
 # Player ratings - predictive TORP ratings (career-weighted with exponential decay)
@@ -129,7 +131,7 @@ if (length(retro_files) > 0) {
 }
 
 # Normalize team names to canonical full names (e.g., "Adelaide" → "Adelaide Crows")
-if (exists("torp_replace_teams")) {
+if (torp_loaded) {
   preds$home_team <- torp_replace_teams(preds$home_team)
   preds$away_team <- torp_replace_teams(preds$away_team)
   cat("Team names normalized:", paste(sort(unique(preds$home_team)), collapse = ", "), "\n")
@@ -327,8 +329,8 @@ shots <- if (length(pbp_files) == 0) {
       distinct(match_id, .keep_all = TRUE) |>
       select(match_id, home_team_id, home_team_name, away_team_name) |>
       mutate(
-        home_team_name = if (exists("torp_replace_teams")) torp_replace_teams(home_team_name) else home_team_name,
-        away_team_name = if (exists("torp_replace_teams")) torp_replace_teams(away_team_name) else away_team_name
+        home_team_name = if (torp_loaded) torp_replace_teams(home_team_name) else home_team_name,
+        away_team_name = if (torp_loaded) torp_replace_teams(away_team_name) else away_team_name
       )
 
     pbp |>
@@ -549,7 +551,7 @@ if (length(fixtures_files) > 0) {
     # Team/venue names in fixtures_*.parquet are already normalized at scrape time
     # by load_fixtures() → .normalise_fixture_columns() in torp package.
     # Use torp_replace_teams/venues if available, otherwise trust source names.
-    norm_team  <- if (exists("torp_replace_teams"))  torp_replace_teams  else identity
+    norm_team  <- if (torp_loaded)  torp_replace_teams  else identity
     norm_venue <- if (exists("torp_replace_venues")) torp_replace_venues else identity
     fixtures_blog <- fixtures_raw |>
       dplyr::filter(!is.na(round_number)) |>
@@ -569,7 +571,7 @@ if (length(fixtures_files) > 0) {
     write_parquet(fixtures_blog, "blog/fixtures-history.parquet")
     cat("fixtures-history:", nrow(fixtures_blog), "matches\n")
   }, error = function(e) {
-    message("WARNING: Fixtures processing failed, skipping: ", conditionMessage(e))
+    message("::warning::Fixtures processing failed, skipping: ", conditionMessage(e))
   })
 } else {
   message("INFO: No fixtures files in source/ — skipping fixtures-history.parquet")
@@ -578,7 +580,7 @@ if (length(fixtures_files) > 0) {
 # Season simulations — Monte Carlo projections (depends on torp package)
 # Everything inside tryCatch so missing deps do not block the rest of the pipeline.
 # torp is already loaded at the top of the script (line 5-11) — skip redundant load_all
-if (exists("torp_replace_teams")) {
+if (torp_loaded) {
   tryCatch({
   library(data.table)
 
@@ -696,5 +698,5 @@ if (exists("torp_replace_teams")) {
           conditionMessage(e))
 })
 } else {
-  message("INFO: torp package not found — skipping simulations")
+  message("::warning::torp package not loaded — skipping simulations")
 }

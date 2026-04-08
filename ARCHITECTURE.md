@@ -81,7 +81,7 @@ sequenceDiagram
 
 ## Components
 
-### GitHub Releases (24 Tags)
+### GitHub Releases (25 Tags)
 
 **Purpose**: Versioned data storage using GitHub Releases as a data bus. Each tag holds per-season parquet files uploaded by `torp::save_to_release()`.
 
@@ -108,7 +108,8 @@ sequenceDiagram
 | `weather-data` | Historical weather | Ad-hoc |
 | `psr-data` | PSR ratings | Daily (game days) |
 | `ps-data` | Player stat ratings | Daily (game days) |
-| `reference-data` | Reference tables | Ad-hoc |
+| `stat_ratings-data` | Per-statistic GAM ratings | Daily (game days) |
+| `reference-data` | Reference tables (stadiums, etc.) | Ad-hoc |
 
 ---
 
@@ -240,3 +241,9 @@ torpdata/
 | **Retrodictions** | Backfilled predictions for rounds that occurred before the prediction pipeline was running |
 | **ratings-trigger** | Repository dispatch event sent from torpdata to torp after new data is released |
 | **blog-trigger** | Repository dispatch event sent from torp to torpdata after ratings/predictions are computed |
+
+## See Also
+
+- `torpverse/ARCHITECTURE.md` -- Ecosystem overview and cross-repo orchestration
+- `torp/ARCHITECTURE.md` -- Core analytics engine architecture
+- `torpmodels/ARCHITECTURE.md` -- Model lifecycle and cache architecture

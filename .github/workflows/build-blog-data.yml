@@ -34,6 +34,21 @@ jobs:
             any::data.table
             any::cli
             any::devtools
+            any::ggplot2
+            any::httr
+            any::lubridate
+            any::mgcv
+            any::curl
+            any::digest
+            any::gh
+            any::jsonlite
+            any::purrr
+            any::rlang
+            any::stringi
+            any::stringr
+            any::tibble
+            any::tidyselect
+            any::withr
 
       - name: Download source parquets
         env:
@@ -162,6 +177,26 @@ jobs:
           else
             echo "::warning::player_skills_${YEAR}.parquet not available — skills data won't update"
           fi
+
+      - name: Validate outputs
+        run: |
+          echo "Files produced:"
+          ls -la blog/*.parquet 2>/dev/null || true
+
+          # Required — fail the build if missing
+          for f in ratings.parquet team-ratings.parquet predictions.parquet player-details.parquet game-logs.parquet; do
+            if [ ! -f "blog/$f" ]; then
+              echo "::error::Required output blog/$f was not produced"
+              exit 1
+            fi
+          done
+
+          # Optional — warn but don't fail
+          for f in simulations.parquet shots.parquet game-stats.parquet player-skills.parquet; do
+            if [ ! -f "blog/$f" ]; then
+              echo "::warning::Optional output blog/$f was not produced"
+            fi
+          done
 
       - uses: actions/setup-node@v6
         with:
