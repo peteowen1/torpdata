@@ -34,6 +34,21 @@ jobs:
             any::data.table
             any::cli
             any::devtools
+            any::ggplot2
+            any::httr
+            any::lubridate
+            any::mgcv
+            any::curl
+            any::digest
+            any::gh
+            any::jsonlite
+            any::purrr
+            any::rlang
+            any::stringi
+            any::stringr
+            any::tibble
+            any::tidyselect
+            any::withr
 
       - name: Download source parquets
         env:
