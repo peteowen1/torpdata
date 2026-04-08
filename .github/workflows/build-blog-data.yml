@@ -163,7 +163,7 @@ jobs:
             echo "::warning::player_skills_${YEAR}.parquet not available — skills data won't update"
           fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '20'
 
