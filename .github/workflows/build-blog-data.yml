@@ -185,10 +185,23 @@ jobs:
             echo "::error::No parquet files found in blog/ — R aggregation may have failed"
             exit 1
           fi
+          retry_upload() {
+            local file="$1" key="$2" max_attempts=3 attempt=1
+            while [ $attempt -le $max_attempts ]; do
+              if wrangler r2 object put "$key" --file "$file" --remote; then
+                return 0
+              fi
+              echo "::warning::Upload attempt $attempt/$max_attempts failed for $key, retrying in $(( 2 ** attempt ))s"
+              sleep $(( 2 ** attempt ))
+              attempt=$(( attempt + 1 ))
+            done
+            return 1
+          }
           for f in "${files[@]}"; do
-            echo "Uploading afl/$(basename $f)..."
-            if ! wrangler r2 object put "inthegame-data/afl/$(basename $f)" --file "$f" --remote; then
-              echo "::error::Failed to upload afl/$(basename $f) to R2"
+            key="inthegame-data/afl/$(basename $f)"
+            echo "Uploading $key..."
+            if ! retry_upload "$f" "$key"; then
+              echo "::error::Failed to upload $key after 3 attempts"
               exit 1
             fi
           done
