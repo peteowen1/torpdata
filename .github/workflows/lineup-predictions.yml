@@ -102,7 +102,7 @@ jobs:
 
       - name: Dispatch ratings trigger to torp
         if: steps.team_release.outputs.release_done == 'true'
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.WORKFLOW_PAT }}
           repository: peteowen1/torp
