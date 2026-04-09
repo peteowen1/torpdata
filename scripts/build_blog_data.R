@@ -658,7 +658,7 @@ if (torp_loaded) {
     ladder <- get_afl_ladder(current_season)
     if (nrow(ladder) == 0) stop("No ladder data available")
     data.table(
-      team = ladder$team,
+      team = torp_replace_teams(ladder$team),
       current_wins = as.integer(ladder$wins),
       current_losses = as.integer(ladder$losses),
       current_pct = round(ladder$percentage, 1)
