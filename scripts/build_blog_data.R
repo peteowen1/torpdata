@@ -54,8 +54,15 @@ preds_list <- lapply(pred_files, function(f) {
   if ("week" %in% names(pred_raw) && "pred_margin" %in% names(pred_raw)) {
     # Legacy format (2025): flat table with week, pred_margin, pred_xtotal
     # Handle column rename: home_rating → home_epr (torp v2026+)
-    if ("home_rating" %in% names(pred_raw) && !"home_epr" %in% names(pred_raw)) {
-      pred_raw <- pred_raw |> rename(home_epr = home_rating, away_epr = away_rating)
+    if ("home_rating" %in% names(pred_raw)) {
+      if ("home_epr" %in% names(pred_raw)) {
+        pred_raw$home_epr <- coalesce(pred_raw$home_epr, pred_raw$home_rating)
+        pred_raw$away_epr <- coalesce(pred_raw$away_epr, pred_raw$away_rating)
+        pred_raw$home_rating <- NULL
+        pred_raw$away_rating <- NULL
+      } else {
+        pred_raw <- pred_raw |> rename(home_epr = home_rating, away_epr = away_rating)
+      }
     }
     pred_raw |>
       transmute(
@@ -107,8 +114,15 @@ if (length(retro_files) > 0) {
     season <- as.integer(sub(".*retrodictions_(\\d+)\\.parquet$", "\\1", basename(f)))
     r <- read_parquet(f) |> ungroup()
     if (!"week" %in% names(r)) return(NULL)
-    if ("home_rating" %in% names(r) && !"home_epr" %in% names(r)) {
-      r <- r |> rename(home_epr = home_rating, away_epr = away_rating)
+    if ("home_rating" %in% names(r)) {
+      if ("home_epr" %in% names(r)) {
+        r$home_epr <- coalesce(r$home_epr, r$home_rating)
+        r$away_epr <- coalesce(r$away_epr, r$away_rating)
+        r$home_rating <- NULL
+        r$away_rating <- NULL
+      } else {
+        r <- r |> rename(home_epr = home_rating, away_epr = away_rating)
+      }
     }
     r |> transmute(
       season = !!season, round = week,
