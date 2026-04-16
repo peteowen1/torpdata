@@ -256,6 +256,34 @@ game_logs <- game_raw |>
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
   arrange(player_id, season, round)
+
+# Join date from fixtures (data/ has fixtures_YYYY.parquet with match_id + utc_start_time)
+fixtures_data_files <- list.files("data", pattern = "^fixtures_.*\\.parquet$", full.names = TRUE)
+if (length(fixtures_data_files) > 0) {
+  date_lookup <- lapply(fixtures_data_files, function(f) {
+    tryCatch(read_parquet(f, col_select = c("match_id", "utc_start_time")), error = function(e) NULL)
+  }) |> dplyr::bind_rows()
+  if (nrow(date_lookup) > 0 && "utc_start_time" %in% names(date_lookup)) {
+    date_lookup <- date_lookup |>
+      dplyr::filter(!is.na(utc_start_time), !is.na(match_id)) |>
+      dplyr::mutate(
+        date = format(as.POSIXct(utc_start_time, format = "%Y-%m-%dT%H:%M:%OS%z"),
+                      tz = "Australia/Melbourne", format = "%Y-%m-%d")
+      ) |>
+      dplyr::select(match_id, date) |>
+      dplyr::distinct(match_id, .keep_all = TRUE)
+    game_logs <- dplyr::left_join(game_logs, date_lookup, by = "match_id")
+    cat("game-logs: date column added from fixtures (",
+        sum(!is.na(game_logs$date)), "/", nrow(game_logs), "rows matched)\n")
+  } else {
+    game_logs$date <- NA_character_
+    message("INFO: fixtures parquets lack utc_start_time — date column will be NA")
+  }
+} else {
+  game_logs$date <- NA_character_
+  message("INFO: No fixtures parquets in data/ — date column will be NA")
+}
+
 if (has_psv) {
   cat("game-logs: PSV/OSV/DSV columns included\n")
 } else {
