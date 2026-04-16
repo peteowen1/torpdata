@@ -270,8 +270,8 @@ if (length(fixtures_data_files) > 0) {
     date_lookup <- date_lookup |>
       dplyr::filter(!is.na(utc_start_time), !is.na(match_id)) |>
       dplyr::mutate(
-        date = format(as.POSIXct(utc_start_time, format = "%Y-%m-%dT%H:%M:%OS%z"),
-                      tz = "Australia/Melbourne", format = "%Y-%m-%d")
+        date = as.character(as.Date(lubridate::with_tz(
+          lubridate::ymd_hms(utc_start_time, quiet = TRUE), "Australia/Melbourne")))
       ) |>
       dplyr::select(match_id, date) |>
       dplyr::distinct(match_id, .keep_all = TRUE)
@@ -284,7 +284,7 @@ if (length(fixtures_data_files) > 0) {
   }
 } else {
   game_logs$date <- NA_character_
-  message("INFO: No fixtures parquets in data/ — date column will be NA")
+  message("INFO: No fixtures parquets in source/ or data/ — date column will be NA")
 }
 
 if (has_psv) {
