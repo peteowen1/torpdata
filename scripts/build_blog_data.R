@@ -31,6 +31,11 @@ for (old_nm in names(ratings_renames)) {
   }
 }
 
+# Handle position column rename: position → position_group (torp PR #79)
+if ("position_group" %in% names(all_ratings) && !"position" %in% names(all_ratings)) {
+  all_ratings$position <- all_ratings$position_group
+}
+
 ratings <- all_ratings |>
   select(player_id, player_name, team, position, torp, recv_epr, disp_epr,
          spoil_epr, hitout_epr, gms, season, round,
@@ -176,6 +181,10 @@ for (old_nm in names(old_to_new)) {
 # Handle first_name + surname → player_name (new format)
 if (!"player_name" %in% names(details_raw) && all(c("first_name", "surname") %in% names(details_raw))) {
   details_raw$player_name <- paste(details_raw$first_name, details_raw$surname)
+}
+# Handle position column rename in player_details (torp PR #79)
+if ("position_group" %in% names(details_raw) && !"position" %in% names(details_raw)) {
+  details_raw$position <- details_raw$position_group
 }
 required_detail_cols <- c("player_id", "player_name", "team", "position",
                           "jumper_number", "height_cm", "weight_kg",
