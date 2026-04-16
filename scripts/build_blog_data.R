@@ -257,8 +257,11 @@ game_logs <- game_raw |>
          match_id) |>
   arrange(player_id, season, round)
 
-# Join date from fixtures (data/ has fixtures_YYYY.parquet with match_id + utc_start_time)
-fixtures_data_files <- list.files("data", pattern = "^fixtures_.*\\.parquet$", full.names = TRUE)
+# Join date from fixtures (CI downloads to source/, local dev has them in data/)
+fixtures_data_files <- list.files("source", pattern = "^fixtures_.*\\.parquet$", full.names = TRUE)
+if (length(fixtures_data_files) == 0) {
+  fixtures_data_files <- list.files("data", pattern = "^fixtures_.*\\.parquet$", full.names = TRUE)
+}
 if (length(fixtures_data_files) > 0) {
   date_lookup <- lapply(fixtures_data_files, function(f) {
     tryCatch(read_parquet(f, col_select = c("match_id", "utc_start_time")), error = function(e) NULL)
