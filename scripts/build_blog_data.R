@@ -485,6 +485,7 @@ if (torp_loaded && file.exists(shot_mdl_path)) {
           n_shots = as.integer(n_shots)
         ) |>
         arrange(desc(xg_skill))
+      dir.create("blog", showWarnings = FALSE)
       write_parquet(finishing_blog, "blog/player-finishing.parquet")
       cat("player-finishing:", nrow(finishing_blog), "players\n")
     } else {
