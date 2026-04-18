@@ -140,6 +140,18 @@ jobs:
             echo "::warning::No fixtures data available — fixtures-history will be skipped"
           fi
 
+          # Shot GAM + player-name lookup (for player finishing-skill extraction — optional)
+          if gh release download core-models -p "shot_ocat_mdl.rds" -D source -R peteowen1/torpmodels; then
+            echo "Downloaded shot_ocat_mdl.rds from torpmodels"
+          else
+            echo "::warning::shot_ocat_mdl.rds not available — player-finishing will be skipped"
+          fi
+          if gh release download core-models -p "shot_player_df.rds" -D source -R peteowen1/torpmodels; then
+            echo "Downloaded shot_player_df.rds from torpmodels"
+          else
+            echo "::warning::shot_player_df.rds not available — finishing names may be NA for retired players"
+          fi
+
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
 
@@ -192,7 +204,7 @@ jobs:
           done
 
           # Optional — warn but don't fail
-          for f in simulations.parquet shots.parquet game-stats.parquet player-skills.parquet; do
+          for f in simulations.parquet shots.parquet game-stats.parquet player-skills.parquet player-finishing.parquet; do
             if [ ! -f "blog/$f" ]; then
               echo "::warning::Optional output blog/$f was not produced"
             fi
