@@ -450,6 +450,55 @@ if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shot
   })
 }
 
+# Player finishing skill — per-player random effects from the shot GAM
+shot_mdl_path <- "source/shot_ocat_mdl.rds"
+if (torp_loaded && file.exists(shot_mdl_path)) {
+  # mgcv must be attached so stats::coef/vcov dispatch to coef.gam/vcov.gam.
+  # Loaded outside the tryCatch so a missing install fails loudly rather than
+  # masquerading as a missing optional input.
+  suppressPackageStartupMessages(library(mgcv))
+  tryCatch({
+    shot_mdl <- readRDS(shot_mdl_path)
+    finishing <- extract_player_xg_skill(shot_model = shot_mdl) |> as.data.frame()
+    if (!is.null(finishing) && nrow(finishing) > 0) {
+      # Backfill names from training-time mapping (covers retired players that
+      # load_player_details(current season) misses)
+      player_df_path <- "source/shot_player_df.rds"
+      if (file.exists(player_df_path)) {
+        name_lookup <- readRDS(player_df_path) |>
+          transmute(player_id = as.character(player_id_shot),
+                    player_name_train = player_name_shot)
+        finishing <- finishing |>
+          left_join(name_lookup, by = "player_id") |>
+          mutate(player_name = coalesce(player_name, player_name_train)) |>
+          select(-player_name_train)
+      }
+      finishing_blog <- finishing |>
+        filter(player_id != "Other", !is.na(player_id)) |>
+        transmute(
+          player_id,
+          player_name,
+          xg_skill = round(xg_skill, 4),
+          xg_skill_se = round(xg_skill_se, 4),
+          n_shots = as.integer(n_shots)
+        ) |>
+        arrange(desc(xg_skill))
+      # Guard against a duplicated player_id in shot_player_df.rds fanning out
+      # the join and shipping duplicates to R2
+      stopifnot(!anyDuplicated(finishing_blog$player_id))
+      dir.create("blog", showWarnings = FALSE)
+      write_parquet(finishing_blog, "blog/player-finishing.parquet")
+      cat("player-finishing:", nrow(finishing_blog), "players\n")
+    } else {
+      message("INFO: extract_player_xg_skill returned no rows — skipping player-finishing.parquet")
+    }
+  }, error = function(e) {
+    message("::warning::Player finishing extraction failed: ", conditionMessage(e))
+  })
+} else {
+  message("INFO: Shot model or torp not available — skipping player-finishing.parquet")
+}
+
 # Match events from PBP — per-season event-level EPV data for match-events page
 # Optional: uses same pbp_files as shots
 if (length(pbp_files) > 0) {
