@@ -451,12 +451,13 @@ if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shot
 }
 
 # Player finishing skill — per-player random effects from the shot GAM
-# Optional: requires shot model in source/ and torp loaded
 shot_mdl_path <- "source/shot_ocat_mdl.rds"
 if (torp_loaded && file.exists(shot_mdl_path)) {
+  # mgcv must be attached so stats::coef/vcov dispatch to coef.gam/vcov.gam.
+  # Loaded outside the tryCatch so a missing install fails loudly rather than
+  # masquerading as a missing optional input.
+  suppressPackageStartupMessages(library(mgcv))
   tryCatch({
-    # mgcv must be on the search path so stats::coef/vcov dispatch to coef.gam/vcov.gam
-    suppressPackageStartupMessages(library(mgcv))
     shot_mdl <- readRDS(shot_mdl_path)
     finishing <- extract_player_xg_skill(shot_model = shot_mdl)
     if (!is.null(finishing) && nrow(finishing) > 0) {
@@ -485,6 +486,9 @@ if (torp_loaded && file.exists(shot_mdl_path)) {
           n_shots = as.integer(n_shots)
         ) |>
         arrange(desc(xg_skill))
+      # Guard against a duplicated player_id in shot_player_df.rds fanning out
+      # the join and shipping duplicates to R2
+      stopifnot(!anyDuplicated(finishing_blog$player_id))
       dir.create("blog", showWarnings = FALSE)
       write_parquet(finishing_blog, "blog/player-finishing.parquet")
       cat("player-finishing:", nrow(finishing_blog), "players\n")
