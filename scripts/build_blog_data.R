@@ -459,24 +459,21 @@ if (torp_loaded && file.exists(shot_mdl_path)) {
   suppressPackageStartupMessages(library(mgcv))
   tryCatch({
     shot_mdl <- readRDS(shot_mdl_path)
-    finishing <- extract_player_xg_skill(shot_model = shot_mdl)
+    finishing <- extract_player_xg_skill(shot_model = shot_mdl) |> as.data.frame()
     if (!is.null(finishing) && nrow(finishing) > 0) {
       # Backfill names from training-time mapping (covers retired players that
       # load_player_details(current season) misses)
       player_df_path <- "source/shot_player_df.rds"
       if (file.exists(player_df_path)) {
-        spd <- readRDS(player_df_path)
-        finishing <- as.data.frame(finishing) |>
-          left_join(
-            transmute(spd,
-                      player_id = as.character(player_id_shot),
-                      player_name_train = player_name_shot),
-            by = "player_id"
-          ) |>
+        name_lookup <- readRDS(player_df_path) |>
+          transmute(player_id = as.character(player_id_shot),
+                    player_name_train = player_name_shot)
+        finishing <- finishing |>
+          left_join(name_lookup, by = "player_id") |>
           mutate(player_name = coalesce(player_name, player_name_train)) |>
           select(-player_name_train)
       }
-      finishing_blog <- as.data.frame(finishing) |>
+      finishing_blog <- finishing |>
         filter(player_id != "Other", !is.na(player_id)) |>
         transmute(
           player_id,

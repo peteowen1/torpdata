@@ -141,15 +141,11 @@ jobs:
           fi
 
           # Shot GAM + player-name lookup (for player finishing-skill extraction — optional)
-          if gh release download core-models -p "shot_ocat_mdl.rds" -D source -R peteowen1/torpmodels; then
-            echo "Downloaded shot_ocat_mdl.rds from torpmodels"
+          if gh release download core-models -p "shot_ocat_mdl.rds" -p "shot_player_df.rds" \
+               -D source -R peteowen1/torpmodels; then
+            echo "Downloaded shot model assets from torpmodels"
           else
-            echo "::warning::shot_ocat_mdl.rds not available — player-finishing will be skipped"
-          fi
-          if gh release download core-models -p "shot_player_df.rds" -D source -R peteowen1/torpmodels; then
-            echo "Downloaded shot_player_df.rds from torpmodels"
-          else
-            echo "::warning::shot_player_df.rds not available — finishing names may be NA for retired players"
+            echo "::warning::shot model assets not available — player-finishing will be skipped"
           fi
 
       - name: Aggregate
