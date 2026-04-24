@@ -242,8 +242,24 @@ if (length(missing_game_cols) > 0) {
        paste(missing_game_cols, collapse = ", "))
 }
 has_psv <- "psv" %in% names(game_raw)
+# Per-game EPV columns — source of truth uses epv, recv_epv, etc. For some
+# time we aliased these to torp/torp_recv/... on the blog parquet because
+# the blog column vocabulary used torp_* for per-game values. That was
+# confusing — per-game value is EPV (Expected Possession Value), while
+# the plain "torp" column on the *ratings* parquet is the season TORP
+# rating (EPR + PSR blend). So the game-logs parquet now ships with
+# epv/epv_recv/... as the canonical names. The torp/torp_* aliases remain
+# as a transition shim for any consumer (blog, notebooks) still reading
+# the old names; once those migrate, drop this block.
 game_logs <- game_raw |>
   mutate(
+    # Canonical (new) names — same values
+    epv = epv,
+    epv_recv = recv_epv,
+    epv_disp = disp_epv,
+    epv_spoil = spoil_epv,
+    epv_hitout = hitout_epv,
+    # Back-compat aliases — drop after all consumers migrate
     torp = epv,
     torp_recv = recv_epv,
     torp_disp = disp_epv,
@@ -251,6 +267,7 @@ game_logs <- game_raw |>
     torp_hitout = hitout_epv
   ) |>
   select(player_id, player_name, season, round, team, opp,
+         epv, epv_recv, epv_disp, epv_spoil, epv_hitout,
          torp, torp_recv, torp_disp, torp_spoil, torp_hitout,
          any_of(c("wp_credit", "wp_disp_credit", "wp_recv_credit")),
          any_of(c("psv", "osv", "dsv")),
