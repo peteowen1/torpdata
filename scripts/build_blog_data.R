@@ -467,6 +467,44 @@ if (!is.null(shots) && "match_id" %in% names(shots) && "team_id" %in% names(shot
   })
 }
 
+# Aggregate per-shot xG into game-stats per player-match (issue #216)
+# Mirrors the per-team xScore block above, but keyed by player_id so the blog's
+# player-stats / team-stats pages can surface xG, xScore, Score-xScore, and shot
+# quality. goal_prob/xscore come from the shot GAM, which already uses near-goal
+# folded distance (torp::add_shot_geometry_variables), so these values are NOT
+# affected by the stored shots.parquet `distance` display bug — no recompute
+# needed. Players with no shots in a match get 0, not NA.
+if (!is.null(game_stats) && !is.null(shots) &&
+    all(c("match_id", "player_id", "goal_prob", "xscore") %in% names(shots))) {
+  tryCatch({
+    player_xg <- shots |>
+      filter(!is.na(player_id)) |>
+      mutate(player_id = as.character(player_id)) |>
+      group_by(match_id, player_id) |>
+      summarise(
+        xg = round(sum(goal_prob, na.rm = TRUE), 3),
+        xscore = round(sum(xscore, na.rm = TRUE), 2),
+        xg_shots = dplyr::n(),
+        .groups = "drop"
+      )
+
+    game_stats <- game_stats |>
+      mutate(player_id = as.character(player_id)) |>
+      left_join(player_xg, by = c("match_id", "player_id")) |>
+      mutate(
+        xg = coalesce(xg, 0),
+        xscore = coalesce(xscore, 0),
+        xg_shots = coalesce(as.integer(xg_shots), 0L)
+      )
+
+    cat("game-stats: xG columns added (",
+        sum(game_stats$xg_shots > 0), "/", nrow(game_stats),
+        "player-matches have shots)\n")
+  }, error = function(e) {
+    message("::warning::game-stats xG aggregation failed: ", conditionMessage(e))
+  })
+}
+
 # Player finishing skill — per-player random effects from the shot GAM
 shot_mdl_path <- "source/shot_ocat_mdl.rds"
 if (torp_loaded && file.exists(shot_mdl_path)) {
