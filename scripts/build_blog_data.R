@@ -372,15 +372,23 @@ shots <- if (length(pbp_files) == 0) {
                    "x", "y", "distance",
                    "goal_prob", "behind_prob", "xscore", "points_shot",
                    "phase_of_play", "venue_length", "venue_width", "shot_at_goal")
+    # Optional — present in modern PBP but NOT asserted below, so a season that
+    # lacks them degrades the blog shot-map Time field to blank rather than
+    # failing the whole shots build (blog #228). Mirrors the events build, which
+    # reads these via bare any_of() with no stop-guard.
+    optional_shot_cols <- c("period", "period_seconds")
 
     pbp <- lapply(pbp_files, function(f) {
-      df <- read_parquet(f, col_select = any_of(shot_cols))
+      df <- read_parquet(f, col_select = any_of(c(shot_cols, optional_shot_cols)))
       missing <- setdiff(shot_cols, names(df))
       if (length(missing) > 0) {
         stop("PBP file ", basename(f), " missing columns: ", paste(missing, collapse = ", "))
       }
       df
     }) |> bind_rows()
+    # Guarantee the optional columns exist even if no PBP file carried them, so
+    # the transmute can reference them unconditionally (all-NA -> Time blank).
+    for (col in optional_shot_cols) if (!col %in% names(pbp)) pbp[[col]] <- NA_integer_
 
     # Encode shot outcome from the shooter's perspective:
     #   1L = goal (6 pts)
@@ -405,6 +413,8 @@ shots <- if (length(pbp_files) == 0) {
         player_id,
         season = as.integer(season),
         round_number = as.integer(round_number),
+        period = as.integer(period),
+        period_seconds = as.integer(period_seconds),
         x = round(x, 1),
         y = round(y, 1),
         distance = round(distance, 1),
