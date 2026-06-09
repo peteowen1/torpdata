@@ -369,6 +369,7 @@ shots <- if (length(pbp_files) == 0) {
     shot_cols <- c("match_id", "team_id", "home_team_id",
                    "home_team_name", "away_team_name",
                    "player_id", "season", "round_number",
+                   "period", "period_seconds",
                    "x", "y", "distance",
                    "goal_prob", "behind_prob", "xscore", "points_shot",
                    "phase_of_play", "venue_length", "venue_width", "shot_at_goal")
@@ -405,6 +406,8 @@ shots <- if (length(pbp_files) == 0) {
         player_id,
         season = as.integer(season),
         round_number = as.integer(round_number),
+        period = as.integer(period),
+        period_seconds = as.integer(period_seconds),
         x = round(x, 1),
         y = round(y, 1),
         distance = round(distance, 1),
