@@ -21,9 +21,13 @@ if (!is.null(torp_path)) {
 # Player ratings - predictive TORP ratings (career-weighted with exponential decay)
 all_ratings <- read_parquet("source/torp_ratings.parquet")
 
-# Handle old column names (torp_recv → recv_epr, etc.)
-ratings_renames <- c(torp_recv = "recv_epr", torp_disp = "disp_epr",
-                     torp_spoil = "spoil_epr", torp_hitout = "hitout_epr")
+# Handle column-name evolution to metric-first epr_* (torp#81). Both the very
+# old torp_* form and the interim component-first recv_epr form upgrade to the
+# new canonical names, keeping the script transition-tolerant.
+ratings_renames <- c(torp_recv = "epr_recv", recv_epr = "epr_recv",
+                     torp_disp = "epr_disp", disp_epr = "epr_disp",
+                     torp_spoil = "epr_spoil", spoil_epr = "epr_spoil",
+                     torp_hitout = "epr_hitout", hitout_epr = "epr_hitout")
 for (old_nm in names(ratings_renames)) {
   new_nm <- ratings_renames[[old_nm]]
   if (old_nm %in% names(all_ratings) && !new_nm %in% names(all_ratings)) {
@@ -34,8 +38,8 @@ for (old_nm in names(ratings_renames)) {
 ratings <- all_ratings |>
   select(player_id, player_name, team,
          any_of(c("position_group", "lineup_position", "position")),
-         torp, recv_epr, disp_epr,
-         spoil_epr, hitout_epr, gms, season, round,
+         torp, epr_recv, epr_disp,
+         epr_spoil, epr_hitout, gms, season, round,
          any_of(c("epr", "psr", "osr", "dsr"))) |>
   arrange(desc(torp))
 
@@ -276,14 +280,19 @@ details <- details_raw |>
 game_files <- list.files("source", pattern = "^player_game_ratings_", full.names = TRUE)
 if (length(game_files) == 0) stop("No player_game_ratings files found in source/")
 game_raw <- lapply(game_files, read_parquet) |> bind_rows()
-# Handle column name evolution: total_points → epv_raw → epv (current)
+# Handle column name evolution: total_points → epv_raw → epv (current).
+# Targets are metric-first (epv_recv, ...) per torp#81. The interim
+# component-first source names (recv_epv, ...) are upgraded defensively so a
+# pre-#81 parquet still resolves cleanly during the transition window.
 col_renames <- c(
-  total_points = "epv", recv_points = "recv_epv", disp_points = "disp_epv",
-  spoil_points = "spoil_epv", hitout_points = "hitout_epv",
-  epv_adj = "epv", recv_epv_adj = "recv_epv", disp_epv_adj = "disp_epv",
-  spoil_epv_adj = "spoil_epv", hitout_epv_adj = "hitout_epv",
-  epv_raw = "epv", recv_epv_raw = "recv_epv", disp_epv_raw = "disp_epv",
-  spoil_epv_raw = "spoil_epv", hitout_epv_raw = "hitout_epv"
+  total_points = "epv", recv_points = "epv_recv", disp_points = "epv_disp",
+  spoil_points = "epv_spoil", hitout_points = "epv_hitout",
+  epv_adj = "epv", recv_epv_adj = "epv_recv", disp_epv_adj = "epv_disp",
+  spoil_epv_adj = "epv_spoil", hitout_epv_adj = "epv_hitout",
+  epv_raw = "epv", recv_epv_raw = "epv_recv", disp_epv_raw = "epv_disp",
+  spoil_epv_raw = "epv_spoil", hitout_epv_raw = "epv_hitout",
+  recv_epv = "epv_recv", disp_epv = "epv_disp",
+  spoil_epv = "epv_spoil", hitout_epv = "epv_hitout"
 )
 for (old_nm in names(col_renames)) {
   new_nm <- col_renames[[old_nm]]
@@ -292,41 +301,19 @@ for (old_nm in names(col_renames)) {
   }
 }
 required_game_cols <- c("player_id", "player_name", "season", "round", "team", "opp",
-                        "epv", "recv_epv", "disp_epv", "spoil_epv",
-                        "hitout_epv", "match_id")
+                        "epv", "epv_recv", "epv_disp", "epv_spoil",
+                        "epv_hitout", "match_id")
 missing_game_cols <- setdiff(required_game_cols, names(game_raw))
 if (length(missing_game_cols) > 0) {
   stop("player_game_ratings parquets missing columns: ",
        paste(missing_game_cols, collapse = ", "))
 }
 has_psv <- "psv" %in% names(game_raw)
-# Per-game EPV columns — source of truth uses epv, recv_epv, etc. For some
-# time we aliased these to torp/torp_recv/... on the blog parquet because
-# the blog column vocabulary used torp_* for per-game values. That was
-# confusing — per-game value is EPV (Expected Possession Value), while
-# the plain "torp" column on the *ratings* parquet is the season TORP
-# rating (EPR + PSR blend). So the game-logs parquet now ships with
-# epv/epv_recv/... as the canonical names. The torp/torp_* aliases remain
-# as a transition shim for any consumer (blog, notebooks) still reading
-# the old names; once those migrate, drop this block.
+# Per-game value is EPV (Expected Possession Value). Source columns are now
+# metric-first (epv, epv_recv, ...) per torp#81, so they pass straight through.
 game_logs <- game_raw |>
-  mutate(
-    # Canonical (new) names — same values
-    epv = epv,
-    epv_recv = recv_epv,
-    epv_disp = disp_epv,
-    epv_spoil = spoil_epv,
-    epv_hitout = hitout_epv,
-    # Back-compat aliases — drop after all consumers migrate
-    torp = epv,
-    torp_recv = recv_epv,
-    torp_disp = disp_epv,
-    torp_spoil = spoil_epv,
-    torp_hitout = hitout_epv
-  ) |>
   select(player_id, player_name, season, round, team, opp,
          epv, epv_recv, epv_disp, epv_spoil, epv_hitout,
-         torp, torp_recv, torp_disp, torp_spoil, torp_hitout,
          any_of(c("wp_credit", "wp_disp_credit", "wp_recv_credit")),
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
