@@ -153,6 +153,64 @@ if (torp_loaded) {
   cat("Team names normalized:", paste(sort(unique(preds$home_team)), collapse = ", "), "\n")
 }
 
+# ---------------------------------------------------------------------------
+# game_type lookup (issue #55): "regular" vs "finals" from the AFL API round name.
+#
+# Finals rounds carry names like "Finals Week 1", "Semi Finals", "Preliminary
+# Finals", "Grand Final" — all of which contain "final" (case-insensitive),
+# while "Opening Round" and "Round N" do not. Detecting on round_name is robust
+# across seasons (the numeric home-and-away cutoff shifts year to year), which is
+# exactly the fragile blog-side `maxHomeAwayRound` lookup this replaces.
+#
+# round_name lives on fixtures (keyed by match_id), NOT on the game-stats /
+# game-logs / predictions source parquets. We build two lookups from fixtures:
+#   - fixtures_round_name: match_id -> round_name (for game-logs / game-stats)
+#   - season_round_name:   season + round -> round_name (for predictions, which
+#                          lack match_id)
+fixtures_lookup_files <- list.files("source", pattern = "^fixtures_.*\\.parquet$", full.names = TRUE)
+if (length(fixtures_lookup_files) == 0) {
+  fixtures_lookup_files <- list.files("data", pattern = "^fixtures_.*\\.parquet$", full.names = TRUE)
+}
+fixtures_round_name <- NULL
+season_round_name <- NULL
+if (length(fixtures_lookup_files) > 0) {
+  fx_round <- lapply(fixtures_lookup_files, function(f) {
+    tryCatch(
+      read_parquet(f, col_select = any_of(c("match_id", "season", "round_number", "round_name"))),
+      error = function(e) NULL
+    )
+  }) |> dplyr::bind_rows()
+  if (!is.null(fx_round) && "round_name" %in% names(fx_round) && nrow(fx_round) > 0) {
+    fixtures_round_name <- fx_round |>
+      dplyr::filter(!is.na(match_id), !is.na(round_name)) |>
+      dplyr::distinct(match_id, .keep_all = TRUE) |>
+      dplyr::select(match_id, round_name)
+    if (all(c("season", "round_number") %in% names(fx_round))) {
+      season_round_name <- fx_round |>
+        dplyr::filter(!is.na(round_name), !is.na(season), !is.na(round_number)) |>
+        dplyr::mutate(season = as.integer(season), round = as.integer(round_number)) |>
+        dplyr::distinct(season, round, round_name)
+    }
+    cat("game_type: round_name lookup built from", length(fixtures_lookup_files),
+        "fixtures file(s) —", nrow(fixtures_round_name), "matches\n")
+  } else {
+    message("INFO: fixtures lack round_name — game_type will fall back to NA where unknown")
+  }
+} else {
+  message("INFO: No fixtures parquets — game_type cannot be derived (will be NA)")
+}
+
+# Classify a round_name vector into "regular"/"finals" (NA round_name -> NA).
+# Base grepl (no stringr dependency); "final" matches all AFL finals round names
+# ("Finals Week 1", "Semi Finals", "Preliminary Finals", "Grand Final") and no
+# home-and-away round ("Opening Round", "Round N").
+.derive_game_type <- function(round_name) {
+  dplyr::if_else(
+    is.na(round_name), NA_character_,
+    dplyr::if_else(grepl("final", round_name, ignore.case = TRUE), "finals", "regular")
+  )
+}
+
 # Player details - bio data for player profile pages
 details_file <- list.files("source", pattern = "^player_details_", full.names = TRUE)
 if (length(details_file) == 0) stop("No player_details file found in source/")
@@ -304,6 +362,21 @@ if (length(fixtures_data_files) > 0) {
   message("INFO: No fixtures parquets in source/ or data/ — date column will be NA")
 }
 
+# game_type: regular vs finals, from fixtures round_name keyed by match_id (issue #55)
+if (!is.null(fixtures_round_name)) {
+  game_logs <- game_logs |>
+    dplyr::left_join(fixtures_round_name, by = "match_id") |>
+    dplyr::mutate(game_type = .derive_game_type(round_name)) |>
+    dplyr::select(-round_name)
+  cat("game-logs: game_type added (",
+      sum(game_logs$game_type == "finals", na.rm = TRUE), "finals,",
+      sum(game_logs$game_type == "regular", na.rm = TRUE), "regular,",
+      sum(is.na(game_logs$game_type)), "unknown)\n")
+} else {
+  game_logs$game_type <- NA_character_
+  message("INFO: No round_name lookup — game-logs game_type will be NA")
+}
+
 if (has_psv) {
   cat("game-logs: PSV/OSV/DSV columns included\n")
 } else {
@@ -352,6 +425,23 @@ game_stats <- if (length(game_stat_files) == 0) {
             conditionMessage(e))
     NULL
   })
+}
+
+# game_type: regular vs finals, from fixtures round_name keyed by match_id (issue #55)
+if (!is.null(game_stats)) {
+  if (!is.null(fixtures_round_name)) {
+    game_stats <- game_stats |>
+      dplyr::left_join(fixtures_round_name, by = "match_id") |>
+      dplyr::mutate(game_type = .derive_game_type(round_name)) |>
+      dplyr::select(-round_name)
+    cat("game-stats: game_type added (",
+        sum(game_stats$game_type == "finals", na.rm = TRUE), "finals,",
+        sum(game_stats$game_type == "regular", na.rm = TRUE), "regular,",
+        sum(is.na(game_stats$game_type)), "unknown)\n")
+  } else {
+    game_stats$game_type <- NA_character_
+    message("INFO: No round_name lookup — game-stats game_type will be NA")
+  }
 }
 
 # Shot data from PBP — optional, doesn't block core outputs
@@ -676,6 +766,22 @@ if (length(pbp_files) > 0) {
   })
 } else {
   message("INFO: No PBP files — skipping chain data")
+}
+
+# game_type for predictions (issue #55). Predictions sources carry no match_id,
+# so we key on season + round via the fixtures round_name lookup.
+if (!is.null(season_round_name)) {
+  preds <- preds |>
+    dplyr::left_join(season_round_name, by = c("season", "round")) |>
+    dplyr::mutate(game_type = .derive_game_type(round_name)) |>
+    dplyr::select(-round_name)
+  cat("predictions: game_type added (",
+      sum(preds$game_type == "finals", na.rm = TRUE), "finals,",
+      sum(preds$game_type == "regular", na.rm = TRUE), "regular,",
+      sum(is.na(preds$game_type)), "unknown)\n")
+} else {
+  preds$game_type <- NA_character_
+  message("INFO: No season/round round_name lookup — predictions game_type will be NA")
 }
 
 if (nrow(ratings) <= 100)   stop("ratings has ", nrow(ratings), " rows (expected >100)")
