@@ -41,6 +41,7 @@ jobs:
             any::curl
             any::digest
             any::gh
+            any::piggyback
             any::jsonlite
             any::purrr
             any::rlang
