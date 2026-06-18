@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # write: re-publishes player_skills_history.parquet to the player_skills-data release
 
 jobs:
   build:
@@ -151,6 +151,21 @@ jobs:
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
 
+      - name: Rebuild + publish player skills history
+        env:
+          GITHUB_PAT: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          TORP_SKILLS_HISTORY_PUBLISH: "1"
+        working-directory: torp
+        run: |
+          # Concatenates the released per-season player_stat_ratings parquets into a
+          # single all-seasons history (rating cols only) and re-publishes it to the
+          # player_skills-data release. No recompute — packaging only. The download
+          # step below then pulls the fresh history for R2. Optional: warn-don't-fail.
+          if ! Rscript data-raw/06-stat-ratings/build_skills_history.R; then
+            echo "::warning::build_skills_history.R failed — player-skills-history will fall back to the previously published file (if any)"
+          fi
+
       - name: Download extra parquets for R2
         env:
           GH_TOKEN: ${{ github.token }}
@@ -186,6 +201,21 @@ jobs:
             echo "::warning::player_skills_${YEAR}.parquet not available — skills data won't update"
           fi
 
+          # Player skills history (all seasons, rating cols only) → player-skills-history.parquet
+          # Lazy-loaded by the blog age-curves page only — optional, warn don't fail.
+          if gh release download player_skills-data -p "player_skills_history.parquet" -D blog; then
+            SIZE=$(stat -c%s "blog/player_skills_history.parquet")
+            if [ "$SIZE" -lt 1000 ]; then
+              echo "::warning::player_skills_history.parquet suspiciously small (${SIZE} bytes) — removing"
+              rm "blog/player_skills_history.parquet"
+            else
+              mv "blog/player_skills_history.parquet" "blog/player-skills-history.parquet"
+              echo "Downloaded player_skills_history.parquet (${SIZE} bytes) → player-skills-history.parquet"
+            fi
+          else
+            echo "::warning::player_skills_history.parquet not available — age-curves per-stat history won't update"
+          fi
+
       - name: Validate outputs
         run: |
           echo "Files produced:"
@@ -200,7 +230,7 @@ jobs:
           done
 
           # Optional — warn but don't fail
-          for f in simulations.parquet shots.parquet game-stats.parquet player-skills.parquet player-finishing.parquet; do
+          for f in simulations.parquet shots.parquet game-stats.parquet player-skills.parquet player-skills-history.parquet player-finishing.parquet; do
             if [ ! -f "blog/$f" ]; then
               echo "::warning::Optional output blog/$f was not produced"
             fi
