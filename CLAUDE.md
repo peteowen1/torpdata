@@ -74,6 +74,8 @@ Blog data is uploaded to the `inthegame-data` R2 bucket under the `afl/` prefix 
 
 **Files uploaded to `afl/`:** `ratings.parquet`, `team-ratings.parquet`, `predictions.parquet`, `player-details.parquet`, `game-logs.parquet`, `game-stats.parquet`, `shots.parquet`, `simulations.parquet`, `player-skills.parquet`, `player-finishing.parquet`, `afl_teams_YYYY.parquet`, `match_events_YYYY.parquet` (per season)
 
+**Name rename at build:** `build_blog_data.R` reads the `torp_`-prefixed release assets (e.g. `source/torp_ratings.parquet` from the `ratings-data` release) and writes the unprefixed blog/R2 names (`ratings.parquet`). So a `torp_*.parquet` on the release/disk side maps to `*.parquet` (no prefix) in `blog/` and R2 — don't expect the names to match across the boundary.
+
 **Secrets required:** `CLOUDFLARE_R2_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` (configured in repo settings)
 
 ## Useful Commands
