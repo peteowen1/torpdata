@@ -262,7 +262,9 @@ jobs:
           retry_upload() {
             local file="$1" key="$2" max_attempts=3 attempt=1
             while [ $attempt -le $max_attempts ]; do
-              if wrangler r2 object put "$key" --file "$file" --remote; then
+              # Cache-Control lets browsers/CF cache + revalidate via ETag (304)
+              # instead of re-downloading megabytes (inthegame-blog #388).
+              if wrangler r2 object put "$key" --file "$file" --cache-control "public, max-age=300" --remote; then
                 return 0
               fi
               echo "::warning::Upload attempt $attempt/$max_attempts failed for $key, retrying in $(( 2 ** attempt ))s"
