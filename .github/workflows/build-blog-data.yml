@@ -5,6 +5,10 @@ on:
     types: [blog-trigger]
   workflow_dispatch:
 
+concurrency:
+  group: daily-release
+  cancel-in-progress: false
+
 permissions:
   contents: write   # write: re-publishes player_skills_history.parquet to the player_skills-data release
 
@@ -54,6 +58,7 @@ jobs:
       - name: Download source parquets
         env:
           GH_TOKEN: ${{ github.token }}
+          WORKFLOW_PAT: ${{ secrets.WORKFLOW_PAT }}
         run: |
           mkdir -p source
           if ! gh release download team_ratings-data -p "team_ratings.parquet" -D source; then
@@ -142,7 +147,9 @@ jobs:
           fi
 
           # Shot GAM + player-name lookup (for player finishing-skill extraction — optional)
-          if gh release download core-models -p "shot_ocat_mdl.rds" -p "shot_player_df.rds" \
+          # Uses WORKFLOW_PAT: github.token is scoped to this repo and can't read
+          # torpmodels if that repo is ever made private.
+          if GH_TOKEN="${WORKFLOW_PAT}" gh release download core-models -p "shot_ocat_mdl.rds" -p "shot_player_df.rds" \
                -D source -R peteowen1/torpmodels; then
             echo "Downloaded shot model assets from torpmodels"
           else

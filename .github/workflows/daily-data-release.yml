@@ -46,11 +46,12 @@ on:
 
 concurrency:
   group: daily-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   GITHUB_PAT: ${{ secrets.WORKFLOW_PAT }}
   R_KEEP_PKG_SOURCE: yes
+  piggyback_cache_duration: 1
 
 jobs:
   release-data:
@@ -113,6 +114,9 @@ jobs:
             cat(paste0('release_done=', tolower(release_done), '\n'),
                 file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
             cat(paste0('release_mode=', result, '\n'),
+                file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
+            failures <- attr(result, 'failures')
+            cat(paste0('failures=', paste(failures, collapse = ','), '\n'),
                 file = Sys.getenv('GITHUB_OUTPUT'), append = TRUE)
           "
         env:
@@ -259,6 +263,48 @@ jobs:
             echo "No new games or lineup changes detected. Release skipped."
             echo "This is expected during the off-season or between rounds."
           } >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on partial data-type failures
+        if: steps.daily_release.outputs.failures != ''
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const title = 'Daily Data Release - Partial Failures';
+            const failures = '${{ steps.daily_release.outputs.failures }}';
+            const body = `Daily data release completed but some data types failed to update on ${new Date().toISOString()}.
+
+            **Failed:** ${failures}
+            **Season:** ${{ steps.release_info.outputs.afl_season || 'unknown' }}
+            **Round:** ${{ steps.release_info.outputs.afl_round || 'unknown' }}
+
+            The release still uploaded successfully for other data types and downstream
+            steps ran normally. Check the [workflow run](${context.payload.repository.html_url}/actions/runs/${context.runId}) for the specific errors.`;
+
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'automation,bug'
+            });
+
+            const existingIssue = issues.data.find(i => i.title === title);
+
+            if (existingIssue) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: `Recurred on ${new Date().toISOString()}: ${failures}\n\n[View run](${context.payload.repository.html_url}/actions/runs/${context.runId})`
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['bug', 'automation']
+              });
+            }
 
       - name: Notify on failure
         if: failure()

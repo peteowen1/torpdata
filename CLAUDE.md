@@ -27,7 +27,11 @@ Each data type has its own GitHub release tag:
 - `player_game-data`, `results-data`, `xg-data`, `teams-data`
 - `predictions`, `ratings-data`, `team_ratings-data`
 - `player_game_ratings-data`, `player_season_ratings-data`
-- `weather-data`, `stat_ratings-data`, `stat-models`
+- `weather-data`, `injury-data`, `retrodictions`, `reference-data`
+- `player_stat_ratings-data`, `player_skills-data`, `psr-data`
+
+(The 58 per-stat GAMs and core EP/WP/shot/match models are released via
+torpmodels' `stat-models` and `core-models` tags, not stored here.)
 
 ## How Data Gets Here
 
@@ -42,8 +46,8 @@ Runs daily at 16:00 UTC (2:00 AM AEST). Can also be manually dispatched with `fo
 
 **Flow:**
 1. Checks out torpdata + torp, installs R dependencies
-2. Runs `run_daily_release()` from torp — returns TRUE/FALSE based on whether new games exist
-3. R writes `release_done=true|false` to `$GITHUB_OUTPUT` (written from R via `cat(file=Sys.getenv('GITHUB_OUTPUT'))` to avoid stdout contamination from `devtools::load_all()`)
+2. Runs `run_daily_release()` (sourced from torp's `data-raw/01-data/daily_release.R`, not an exported function) — returns `'full'`, `'team_only'`, or `'none'`
+3. R writes `release_done=true|false` to `$GITHUB_OUTPUT` (derived from the `'none'` vs not check; written via `cat(file=Sys.getenv('GITHUB_OUTPUT'))` to avoid stdout contamination from `devtools::load_all()`)
 4. Verification, release info, and summary steps are gated on `release_done == 'true'`
 5. If data was released and verified, dispatches `ratings-trigger` to torp
 6. Off-season: skips gracefully with a "No New Data" summary

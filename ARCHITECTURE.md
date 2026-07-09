@@ -64,10 +64,10 @@ sequenceDiagram
     participant R2 as Cloudflare R2
 
     CRON->>TD: daily-data-release.yml
-    TD->>TORP: torp::run_daily_release()
+    TD->>TORP: run_daily_release() (sourced from data-raw/01-data/daily_release.R)
     TORP->>TORP: has_new_games() check
     alt New games found
-        TORP->>GH: Upload parquets (24 release tags)
+        TORP->>GH: Upload parquets (22 release tags)
         TD->>TORP: repository_dispatch (ratings-trigger)
         TORP->>TORP: EPR pipeline + predictions
         TORP->>GH: Upload ratings + predictions
@@ -81,7 +81,7 @@ sequenceDiagram
 
 ## Components
 
-### GitHub Releases (25 Tags)
+### GitHub Releases (22 Tags)
 
 **Purpose**: Versioned data storage using GitHub Releases as a data bus. Each tag holds per-season parquet files uploaded by `torp::save_to_release()`.
 
@@ -107,9 +107,11 @@ sequenceDiagram
 | `ep_wp_chart-data` | Lightweight PBP for charting | Daily (game days) |
 | `weather-data` | Historical weather | Ad-hoc |
 | `psr-data` | PSR ratings | Daily (game days) |
-| `ps-data` | Player stat ratings | Daily (game days) |
-| `stat_ratings-data` | Per-statistic GAM ratings | Daily (game days) |
+| `player_stat_ratings-data` | Per-statistic player ratings | Daily (game days) |
 | `reference-data` | Reference tables (stadiums, etc.) | Ad-hoc |
+
+The 58 per-statistic GAMs themselves (not the ratings derived from them) are
+released via torpmodels' `stat-models` tag, not stored on torpdata.
 
 ---
 
@@ -130,7 +132,7 @@ sequenceDiagram
 **Manual Inputs**: `force_release` (skip new-games check), `rebuild_aggregates` (full rebuild)
 
 **Steps**:
-1. Run `torp::run_daily_release(force)` -- returns `'full'`, `'team_only'`, or `'none'`
+1. Run `run_daily_release(force)` (not an exported torp function -- sourced from `data-raw/01-data/daily_release.R`) -- returns `'full'`, `'team_only'`, or `'none'`
 2. Verify release freshness (critical files updated within 24 hours)
 3. Optional: rebuild aggregated files
 4. Dispatch `ratings-trigger` to torp with season/round payload
@@ -149,8 +151,8 @@ sequenceDiagram
 **Schedule**: Wed/Thu 7-10 PM AEST (4 cron jobs) + Friday 8 AM AEST
 
 **Steps**:
-1. Run `torp::has_new_team_data()` -- returns TRUE/FALSE
-2. If TRUE: run `torp::run_daily_release()` in team-only mode
+1. Run `has_new_team_data()` (sourced from `data-raw/01-data/daily_release.R`, not exported) -- returns TRUE/FALSE
+2. If TRUE: run `run_daily_release()` in team-only mode
 3. Dispatch `ratings-trigger` to torp
 
 ---
