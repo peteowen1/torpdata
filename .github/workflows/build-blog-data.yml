@@ -5,6 +5,10 @@ on:
     types: [blog-trigger]
   workflow_dispatch:
 
+concurrency:
+  group: daily-release
+  cancel-in-progress: false
+
 permissions:
   contents: write   # write: re-publishes player_skills_history.parquet to the player_skills-data release
 
