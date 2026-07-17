@@ -960,6 +960,130 @@ if (torp_loaded) {
 
   write_parquet(as.data.frame(sim_output), "blog/simulations.parquet")
   cat("simulations:", nrow(sim_output), "teams\n")
+
+  # --- Team strength — small residual/BT reference table for the browser sim ---
+  # Mirrors the World Cup's wc2026_team_strength.parquet (pannaverse/panna
+  # data-raw/match-predictions-opta/12_export_wc2026_blog.R). The blog's
+  # browser-side AFL finals simulator ports torp's margin formula in JS but has
+  # no access to R/mgcv, so it has been missing the per-team GAM quality
+  # residual entirely (e.g. Fremantle overperforms its torp rating by several
+  # points/game in 2026) — this export lets the browser sim add that term.
+  # In its own nested tryCatch so a BT-fit hiccup can't take out simulations.parquet.
+  tryCatch({
+    # sim_results$original_ratings IS prep$sim_teams from prepare_sim_data()
+    # (torp/R/season_sim.R) — the exact team/torp/residual_mean/residual_se the
+    # season sim itself samples from per-sim (team_residuals = "auto" ->
+    # .extract_team_residuals()). Reusing it here means this export can never
+    # diverge from what the sim uses. residual_mean/residual_se ARE meant to be
+    # consumed as a sim input by the browser sim (that's the point of this
+    # export) — unlike bt_results/bt_model below, which are DISPLAY /
+    # REFERENCE ONLY and must never be fed into any sim (R or browser).
+    strength_dt <- data.table::as.data.table(sim_results$original_ratings)
+    strength_dt[, team := torp_replace_teams(team)]
+    strength_dt <- strength_dt[, .(team, torp, residual_mean, residual_se)]
+
+    # --- bt_results: logistic/glm Bradley-Terry fit on THIS season's completed
+    # games (win = 1, loss = 0, draw = 0.5 — AFL draws are rare, ~1 in 300
+    # games; folding them in at 0.5 avoids discarding the odd one rather than
+    # needing a Davidson draw parameter), with a fixed home-ground intercept.
+    # DISPLAY/REFERENCE ONLY — never a sim input. Team strengths are identified
+    # against an arbitrary reference team (coefficient pinned to 0 pre-fit),
+    # then re-centered to mean 0 post-fit for interpretability and side-by-side
+    # comparability with bt_model (mirrors the mean-centering panna's
+    # fit_bt_ratings() does). bt_results_se is the glm standard error relative
+    # to the (pre-centering) reference team, reported as-is — a cheap
+    # approximation that doesn't correct for the recentering covariance, fine
+    # for a display-only column.
+    season_played <- preds[preds$season == current_season & !is.na(preds$actual_margin), ]
+    bt_results_dt <- data.table::data.table(team = strength_dt$team,
+                                            bt_results = NA_real_, bt_results_se = NA_real_)
+    if (nrow(season_played) >= 2) {
+      bt_teams <- sort(unique(c(season_played$home_team, season_played$away_team)))
+      if (length(bt_teams) >= 2) {
+        ref_team <- bt_teams[1]
+        other_teams <- bt_teams[-1]
+        # make.names() sidesteps as.data.frame()'s check.names mangling teams
+        # with spaces (e.g. "West Coast") into differently-shaped column names
+        safe_names <- make.names(other_teams, unique = TRUE)
+        X <- matrix(0, nrow = nrow(season_played), ncol = length(other_teams),
+                    dimnames = list(NULL, safe_names))
+        for (i in seq_len(nrow(season_played))) {
+          hi <- match(season_played$home_team[i], other_teams)
+          ai <- match(season_played$away_team[i], other_teams)
+          if (!is.na(hi)) X[i, hi] <- X[i, hi] + 1
+          if (!is.na(ai)) X[i, ai] <- X[i, ai] - 1
+        }
+        y <- with(season_played, ifelse(actual_margin > 0, 1,
+                                        ifelse(actual_margin < 0, 0, 0.5)))
+        glm_df <- as.data.frame(X)
+        glm_df$home_adv <- 1
+        glm_df$y <- y
+        bt_fit <- stats::glm(y ~ . - 1, data = glm_df, family = stats::binomial())
+        co <- summary(bt_fit)$coefficients
+        est <- co[safe_names, "Estimate"];   names(est) <- other_teams
+        se  <- co[safe_names, "Std. Error"]; names(se)  <- other_teams
+        full_est <- c(setNames(0, ref_team), est)
+        full_se  <- c(setNames(NA_real_, ref_team), se)
+        full_est <- full_est - mean(full_est)
+        bt_results_dt <- data.table::data.table(team = names(full_est),
+                                                bt_results = round(as.numeric(full_est), 4),
+                                                bt_results_se = round(as.numeric(full_se), 4))
+      }
+    }
+    strength_dt <- merge(strength_dt, bt_results_dt, by = "team", all.x = TRUE)
+
+    # --- bt_model: Bradley-Terry fitted on the MODEL'S predicted probabilities
+    # (this season's full predictions.parquet fixture set — played AND future
+    # rounds, using home_win_prob), NOT actual results — that's what
+    # bt_results is for. DISPLAY/REFERENCE ONLY — never a sim input. Mirrors
+    # panna::fit_bt_ratings() (pannaverse/panna/R/team_rating.R): cross-entropy
+    # optimisation via L-BFGS-B, mean-centered ratings, a home-advantage
+    # parameter. Drops panna's Davidson draw parameter (nu) — AFL
+    # predictions.parquet carries a single home_win_prob, not a W/D/L split,
+    # and draws are ~1% of games, so a simplified 2-outcome (no-draw) variant
+    # is used instead of fitting/estimating nu from a proxy. When the future
+    # 612-row directed matchup table (18x17 pairs x2 venues) exists, refit this
+    # on all ordered pairs instead of the fixture subset.
+    season_fixtures <- preds[preds$season == current_season & !is.na(preds$home_win_prob), ]
+    bt_model_dt <- data.table::data.table(team = strength_dt$team, bt_model = NA_real_)
+    if (nrow(season_fixtures) >= 2) {
+      bm_teams <- sort(unique(c(season_fixtures$home_team, season_fixtures$away_team)))
+      if (length(bm_teams) >= 2) {
+        n_bm <- length(bm_teams)
+        idx_home <- match(season_fixtures$home_team, bm_teams)
+        idx_away <- match(season_fixtures$away_team, bm_teams)
+        p_obs <- pmin(pmax(season_fixtures$home_win_prob, 1e-6), 1 - 1e-6)
+        loss_fn <- function(par) {
+          r <- par[1:n_bm]; r <- r - mean(r)
+          hadv <- par[n_bm + 1L]
+          logit_p <- r[idx_home] - r[idx_away] + hadv
+          p_model <- 1 / (1 + exp(-logit_p))
+          p_model <- pmin(pmax(p_model, 1e-9), 1 - 1e-9)
+          -sum(p_obs * log(p_model) + (1 - p_obs) * log(1 - p_model))
+        }
+        init <- c(rep(0, n_bm), 0.25)
+        bm_fit <- stats::optim(init, loss_fn, method = "L-BFGS-B",
+                               control = list(maxit = 200, factr = 1e7))
+        r_bm <- bm_fit$par[1:n_bm]; r_bm <- r_bm - mean(r_bm)
+        bt_model_dt <- data.table::data.table(team = bm_teams, bt_model = round(r_bm, 4))
+      }
+    }
+    strength_dt <- merge(strength_dt, bt_model_dt, by = "team", all.x = TRUE)
+
+    strength_dt[, season := current_season]
+    strength_dt[, round := latest_round]
+    strength_dt[, updated := as.character(Sys.time())]
+    data.table::setcolorder(strength_dt, c("team", "torp", "residual_mean", "residual_se",
+                                           "bt_results", "bt_results_se", "bt_model",
+                                           "season", "round", "updated"))
+
+    write_parquet(as.data.frame(strength_dt), "blog/team-strength.parquet")
+    cat("team-strength:", nrow(strength_dt), "teams\n")
+    print(strength_dt[order(-bt_results), .(team, torp, residual_mean, bt_results, bt_model)])
+  }, error = function(e) {
+    message("::warning::Team-strength export failed, skipping team-strength.parquet: ",
+            conditionMessage(e))
+  })
 }, error = function(e) {
   message("::warning::Simulation failed, skipping simulations.parquet: ",
           conditionMessage(e))

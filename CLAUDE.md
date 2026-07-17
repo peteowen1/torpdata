@@ -76,7 +76,9 @@ Blog/analysis data generation workflow. Manually dispatched — runs `scripts/bu
 
 Blog data is uploaded to the `inthegame-data` R2 bucket under the `afl/` prefix via wrangler CLI in `build-blog-data.yml`.
 
-**Files uploaded to `afl/`:** `ratings.parquet`, `team-ratings.parquet`, `predictions.parquet`, `player-details.parquet`, `game-logs.parquet`, `game-stats.parquet`, `shots.parquet`, `simulations.parquet`, `player-skills.parquet`, `player-finishing.parquet`, `afl_teams_YYYY.parquet`, `match_events_YYYY.parquet` (per season)
+**Files uploaded to `afl/`:** `ratings.parquet`, `team-ratings.parquet`, `predictions.parquet`, `player-details.parquet`, `game-logs.parquet`, `game-stats.parquet`, `shots.parquet`, `simulations.parquet`, `team-strength.parquet`, `player-skills.parquet`, `player-finishing.parquet`, `afl_teams_YYYY.parquet`, `match_events_YYYY.parquet` (per season)
+
+**`team-strength.parquet`** (added for the blog's browser finals sim, mirrors panna's `wc2026_team_strength.parquet`): one row per team with `torp`, the match-GAM `residual_mean`/`residual_se` (same object `season_sim.R`'s `simulate_afl_season()` samples from per-sim — reused via `sim_results$original_ratings`, so it can never diverge from the R sim), and two DISPLAY-ONLY Bradley-Terry columns — `bt_results`/`bt_results_se` (logistic/glm BT fit on this season's completed games) and `bt_model` (cross-entropy BT fit on the model's predicted `home_win_prob`, mirroring `panna::fit_bt_ratings()`). Built in `scripts/build_blog_data.R`'s season-sim block; needs `torpmodels` installed in CI (added to `build-blog-data.yml`'s package list) or `.extract_team_residuals()` silently degrades to all-zero residuals.
 
 **Name rename at build:** `build_blog_data.R` reads the `torp_`-prefixed release assets (e.g. `source/torp_ratings.parquet` from the `ratings-data` release) and writes the unprefixed blog/R2 names (`ratings.parquet`). So a `torp_*.parquet` on the release/disk side maps to `*.parquet` (no prefix) in `blog/` and R2 — don't expect the names to match across the boundary.
 

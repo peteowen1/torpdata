@@ -29,6 +29,12 @@ jobs:
         with:
           use-public-rspm: true
 
+      # torpmodels (GitHub, not CRAN — via its "peteowen1/torpmodels" pak spec below)
+      # is needed so the season-sim block's team_residuals = "auto" can actually call
+      # torpmodels::load_torp_model("match_gams") inside torp:::.extract_team_residuals().
+      # Without it that call errors (caught, degrades to NULL) and residual_mean/
+      # residual_se silently come back all-zero in both simulations.parquet and
+      # team-strength.parquet.
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           packages: |
@@ -55,6 +61,7 @@ jobs:
             any::tibble
             any::tidyselect
             any::withr
+            peteowen1/torpmodels
 
       - name: Download source parquets
         env:
@@ -239,7 +246,7 @@ jobs:
           done
 
           # Optional — warn but don't fail
-          for f in simulations.parquet shots.parquet game-stats.parquet player-skills.parquet player-skills-history.parquet player-finishing.parquet; do
+          for f in simulations.parquet team-strength.parquet shots.parquet game-stats.parquet player-skills.parquet player-skills-history.parquet player-finishing.parquet; do
             if [ ! -f "blog/$f" ]; then
               echo "::warning::Optional output blog/$f was not produced"
             fi
