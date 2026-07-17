@@ -49,6 +49,7 @@ jobs:
             any::jsonlite
             any::purrr
             any::rlang
+            any::rvest
             any::stringi
             any::stringr
             any::tibble
