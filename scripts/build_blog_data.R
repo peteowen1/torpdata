@@ -937,9 +937,13 @@ if (torp_loaded) {
   })
 
   # Merge summary + current standings + finals stages + position distribution
+  # top_10_pct = the finals cutoff under the 2026 Final Ten system; top_6_pct =
+  # skips the Wildcard Round. Both computed by torp since April 2026 but never
+  # threaded through here (blog fallback showed top-8 as "finals" — torp#106).
+  # lose_wildcard_pct joins finals_stage once torp#106's finals rewrite ships.
   sim_output <- merge(
     summary_dt[, .(team, avg_wins, avg_losses, avg_percentage, avg_rank,
-                   top_1_pct, top_4_pct, top_8_pct, last_pct)],
+                   top_1_pct, top_4_pct, top_6_pct, top_8_pct, top_10_pct, last_pct)],
     current, by = "team", all.x = TRUE
   )
   sim_output <- merge(sim_output, finals_stage, by = "team", all.x = TRUE)
