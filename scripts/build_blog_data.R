@@ -901,7 +901,10 @@ if (torp_loaded) {
     runner_up_pct   = sum(finals_finish == 4) / n_sims_val,
     lose_prelim_pct = sum(finals_finish == 3) / n_sims_val,
     lose_semi_pct   = sum(finals_finish == 2) / n_sims_val,
-    lose_elim_pct   = sum(finals_finish == 1) / n_sims_val
+    lose_elim_pct   = sum(finals_finish == 1) / n_sims_val,
+    # finals_finish == 0 = lost a Wildcard Final (Final Ten system, torp#106).
+    # Zero for every team until the torp finals rewrite ships — harmless before.
+    lose_wildcard_pct = sum(finals_finish == 0) / n_sims_val
   ), by = team]
 
   # Position distribution from ladder results
