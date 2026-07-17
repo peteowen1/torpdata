@@ -1070,16 +1070,104 @@ if (torp_loaded) {
     }
     strength_dt <- merge(strength_dt, bt_model_dt, by = "team", all.x = TRUE)
 
+    # --- pts_results / pts_model: POINTS-SCALE team strengths, fit by plain
+    # least squares directly on match MARGINS — a Massey-style rating, as
+    # opposed to bt_results/bt_model's log-odds win/loss scale above. The
+    # log-odds scale is kept as-is (it's the right scale for win-prob/sim
+    # transforms); this points scale exists purely for a "worth about +X
+    # points vs average" display number, sitting alongside torp/residual_mean
+    # which are already points-scale. DISPLAY/REFERENCE ONLY — never a sim
+    # input, same as the bt_* columns.
+    #
+    # Model: margin_home = home_adv + s_home - s_away + error. Reuses the
+    # same design-matrix construction as bt_results above (reference-team
+    # column dropped to identify the fit, i.e. s_ref pinned to 0 pre-fit),
+    # fit via lm() (closed-form least squares — margin is already a
+    # continuous points scale, no logit/draw machinery needed), then
+    # strengths are re-centered to sum-to-zero (mean-subtracted) post-fit so
+    # "s_i" reads as points above/below a league-average team. This
+    # pin-then-recenter identification is algebraically equivalent to a
+    # sum-to-zero contrast constraint baked into the design matrix — simpler
+    # to code and identical result for the *point estimates* (recentering is
+    # just a location shift); the standard errors are, as with bt_results,
+    # reported relative to the pre-recentering reference team as a cheap
+    # approximation.
+    .fit_margin_strength <- function(games_df, margin_col) {
+      games_df <- games_df[!is.na(games_df[[margin_col]]), ]
+      teams <- sort(unique(c(games_df$home_team, games_df$away_team)))
+      if (length(teams) < 2 || nrow(games_df) < 2) return(NULL)
+      ref_team <- teams[1]
+      other_teams <- teams[-1]
+      safe_names <- make.names(other_teams, unique = TRUE)
+      X <- matrix(0, nrow = nrow(games_df), ncol = length(other_teams),
+                  dimnames = list(NULL, safe_names))
+      for (i in seq_len(nrow(games_df))) {
+        hi <- match(games_df$home_team[i], other_teams)
+        ai <- match(games_df$away_team[i], other_teams)
+        if (!is.na(hi)) X[i, hi] <- X[i, hi] + 1
+        if (!is.na(ai)) X[i, ai] <- X[i, ai] - 1
+      }
+      lm_df <- as.data.frame(X)
+      lm_df$home_adv <- 1
+      lm_df$margin <- games_df[[margin_col]]
+      fit <- stats::lm(margin ~ . - 1, data = lm_df)
+      co <- summary(fit)$coefficients
+      est <- co[safe_names, "Estimate"];   names(est) <- other_teams
+      se  <- co[safe_names, "Std. Error"]; names(se)  <- other_teams
+      full_est <- c(setNames(0, ref_team), est)
+      full_se  <- c(setNames(NA_real_, ref_team), se)
+      full_est <- full_est - mean(full_est)
+      list(
+        strength = data.table::data.table(team = names(full_est),
+                                          strength    = round(as.numeric(full_est), 3),
+                                          strength_se = round(as.numeric(full_se), 3)),
+        home_adv = round(unname(co["home_adv", "Estimate"]), 3)
+      )
+    }
+
+    pts_results_fit <- tryCatch(.fit_margin_strength(season_played, "actual_margin"),
+                                error = function(e) NULL)
+    pts_results_dt <- data.table::data.table(team = strength_dt$team,
+                                             pts_results = NA_real_, pts_results_se = NA_real_)
+    if (!is.null(pts_results_fit)) {
+      pts_results_dt <- data.table::copy(pts_results_fit$strength)
+      data.table::setnames(pts_results_dt, c("strength", "strength_se"),
+                           c("pts_results", "pts_results_se"))
+      cat("pts_results home advantage:", pts_results_fit$home_adv, "points\n")
+    }
+    strength_dt <- merge(strength_dt, pts_results_dt, by = "team", all.x = TRUE)
+
+    # pred_margin across the FULL season fixture set (played + future rounds)
+    # — the match model's own implied points-above-average per team. Same
+    # 612-row directed-matchup-table caveat as bt_model above applies here.
+    pts_model_fit <- tryCatch(.fit_margin_strength(season_fixtures, "pred_margin"),
+                              error = function(e) NULL)
+    pts_model_dt <- data.table::data.table(team = strength_dt$team,
+                                           pts_model = NA_real_, pts_model_se = NA_real_)
+    pts_home_adv_val <- NA_real_
+    if (!is.null(pts_model_fit)) {
+      pts_model_dt <- data.table::copy(pts_model_fit$strength)
+      data.table::setnames(pts_model_dt, c("strength", "strength_se"),
+                           c("pts_model", "pts_model_se"))
+      pts_home_adv_val <- pts_model_fit$home_adv
+      cat("pts_model home advantage:", pts_home_adv_val, "points\n")
+    }
+    strength_dt <- merge(strength_dt, pts_model_dt, by = "team", all.x = TRUE)
+    strength_dt[, pts_home_adv := pts_home_adv_val]
+
     strength_dt[, season := current_season]
     strength_dt[, round := latest_round]
     strength_dt[, updated := as.character(Sys.time())]
     data.table::setcolorder(strength_dt, c("team", "torp", "residual_mean", "residual_se",
                                            "bt_results", "bt_results_se", "bt_model",
+                                           "pts_results", "pts_results_se",
+                                           "pts_model", "pts_model_se", "pts_home_adv",
                                            "season", "round", "updated"))
 
     write_parquet(as.data.frame(strength_dt), "blog/team-strength.parquet")
     cat("team-strength:", nrow(strength_dt), "teams\n")
-    print(strength_dt[order(-bt_results), .(team, torp, residual_mean, bt_results, bt_model)])
+    print(strength_dt[order(-bt_results), .(team, torp, residual_mean, bt_results, bt_model,
+                                             pts_results, pts_model)])
   }, error = function(e) {
     message("::warning::Team-strength export failed, skipping team-strength.parquet: ",
             conditionMessage(e))
