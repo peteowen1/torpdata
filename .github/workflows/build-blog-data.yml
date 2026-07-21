@@ -167,6 +167,9 @@ jobs:
       - name: Aggregate
         run: Rscript scripts/build_blog_data.R
 
+      - name: Build AFL chain parquet (per-row WP/WPA-credit chain data)
+        run: Rscript scripts/build_afl_chains.R
+
       - name: Rebuild + publish player skills history
         env:
           GITHUB_PAT: ${{ github.token }}
@@ -246,7 +249,8 @@ jobs:
           done
 
           # Optional — warn but don't fail
-          for f in simulations.parquet team-strength.parquet shots.parquet game-stats.parquet player-skills.parquet player-skills-history.parquet player-finishing.parquet; do
+          YEAR=$(date +%Y)
+          for f in simulations.parquet team-strength.parquet shots.parquet game-stats.parquet player-skills.parquet player-skills-history.parquet player-finishing.parquet "chains-${YEAR}.parquet"; do
             if [ ! -f "blog/$f" ]; then
               echo "::warning::Optional output blog/$f was not produced"
             fi
