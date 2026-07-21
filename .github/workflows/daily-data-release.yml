@@ -52,6 +52,7 @@ env:
   GITHUB_PAT: ${{ secrets.WORKFLOW_PAT }}
   R_KEEP_PKG_SOURCE: yes
   piggyback_cache_duration: 1
+  VERSEBUS_STRICT: "1"
 
 jobs:
   release-data:
