@@ -708,65 +708,15 @@ if (length(pbp_files) > 0) {
   message("INFO: No PBP files — skipping match events")
 }
 
-# Chain data from PBP — per-season chain action data for match-chains page
-# Optional: uses same pbp_files as shots/match-events
-if (length(pbp_files) > 0) {
-  tryCatch({
-    chain_cols <- c("match_id", "chain_number", "display_order", "player_id",
-                    "player_name_given_name", "player_name_surname",
-                    "team_id", "home_team_id", "home_team_name", "away_team_name",
-                    "x", "y", "description", "delta_epv", "wpa", "disposal",
-                    "final_state", "initial_state", "period", "period_seconds",
-                    "shot_at_goal", "season", "round_number",
-                    "venue_length", "venue_width")
-
-    dir.create("blog", showWarnings = FALSE)
-
-    for (pbp_file in pbp_files) {
-      pbp_season <- as.integer(sub(".*pbp_data_(\\d{4})_all\\.parquet$", "\\1", basename(pbp_file)))
-      pbp <- read_parquet(pbp_file, col_select = any_of(chain_cols))
-
-      chains <- pbp |>
-        filter(!is.na(chain_number)) |>
-        transmute(
-          match_id,
-          chain_number = as.integer(chain_number),
-          display_order = as.integer(display_order),
-          player_id,
-          player_name = trimws(paste(coalesce(player_name_given_name, ""),
-                                     coalesce(player_name_surname, ""))),
-          team_id,
-          home_team_id,
-          home_team = home_team_name,
-          away_team = away_team_name,
-          x = round(x, 1),
-          y = round(y, 1),
-          description,
-          delta_epv = round(delta_epv, 4),
-          wpa = round(wpa, 4),
-          disposal = as.character(disposal),
-          final_state,
-          initial_state,
-          period = as.integer(period),
-          period_seconds = as.integer(period_seconds),
-          shot_at_goal = !is.na(shot_at_goal) & shot_at_goal == TRUE,
-          season = as.integer(season),
-          round_number = as.integer(round_number),
-          venue_length = coalesce(as.integer(venue_length), DEFAULT_VENUE_LENGTH),
-          venue_width = coalesce(as.integer(venue_width), DEFAULT_VENUE_WIDTH)
-        ) |>
-        arrange(match_id, chain_number, display_order)
-
-      out_name <- paste0("chains-", pbp_season, ".parquet")
-      write_parquet(chains, file.path("blog", out_name))
-      cat(out_name, ":", nrow(chains), "chain actions\n")
-    }
-  }, error = function(e) {
-    message("::warning::Chain data processing failed: ", conditionMessage(e))
-  })
-} else {
-  message("INFO: No PBP files — skipping chain data")
-}
+# Chain data (blog/chains-{season}.parquet) — SUPERSEDED 2026-07-21 by the
+# dedicated scripts/build_afl_chains.R (docs/plans/AFL_CHAIN_PARQUET_PLAN.md
+# Stage 2), which is the sole writer of this file now. That script uses
+# torp's load_pbp() + attach_per_row_wpa_split() (Stage 1, torp PR #114) to
+# add wp/wpa_disp/wpa_recv/delta_ep/player_credit columns for the blog's
+# per-quarter WPA toggle, while still emitting the x/y/disposal/team-name
+# columns match-chains.qmd and match.qmd's pass map already depend on. Run it
+# separately (see build-blog-data.yml) — do not re-add a chain block here, or
+# the two scripts will race to write the same blog/chains-{season}.parquet.
 
 # game_type for predictions (issue #55). Predictions sources carry no match_id,
 # so we key on season + round via the fixtures round_name lookup.
