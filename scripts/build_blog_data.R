@@ -110,10 +110,14 @@ preds_list <- lapply(pred_files, function(f) {
   }
 })
 preds <- bind_rows(preds_list) |>
-  mutate(round = as.integer(round)) |>
+  mutate(round = as.integer(round), source = "locked") |>
   arrange(season, round, desc(abs(pred_margin)))
 
-# Backfill with retrodictions for rounds that have no locked predictions
+# Backfill with retrodictions for rounds that have no locked predictions.
+# Retrodiction rows use current/final ratings applied uniformly to every match
+# (including past ones), so they're leaky vs. the walk-forward-safe locked
+# predictions above — tagged via `source` so consumers (e.g. the blog's as-at
+# time-travel scrubber) can filter them out (torpdata#78).
 retro_files <- list.files("source", pattern = "^retrodictions_", full.names = TRUE)
 if (length(retro_files) > 0) {
   retro_list <- lapply(retro_files, function(f) {
@@ -143,7 +147,8 @@ if (length(retro_files) > 0) {
   retro <- bind_rows(retro_list)
   # Only add retrodiction rows for season+round+home+away combos missing from predictions
   retro_new <- retro |>
-    anti_join(preds, by = c("season", "round", "home_team", "away_team"))
+    anti_join(preds, by = c("season", "round", "home_team", "away_team")) |>
+    mutate(source = "retrodiction")
   if (nrow(retro_new) > 0) {
     preds <- bind_rows(preds, retro_new) |> arrange(season, round, desc(abs(pred_margin)))
     cat("Backfilled", nrow(retro_new), "matches from retrodictions\n")
