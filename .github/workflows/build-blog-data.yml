@@ -256,6 +256,24 @@ jobs:
             fi
           done
 
+      - name: Snapshot dated predictions + injuries (torpdata#77)
+        run: |
+          # Insurance for future-season as-at replay fidelity: predictions.parquet
+          # and injuries.parquet are otherwise only ever published as "latest",
+          # overwritten every run — a past as-at replay can't reconstruct what the
+          # model actually said on a given historical date without a dated copy.
+          # Flat filenames land in the same afl/ R2 prefix as everything else via
+          # the existing blog/*.parquet upload loop below (no loop changes needed).
+          # Retention/pruning not implemented yet — R2 storage is cheap and this
+          # is a low-volume daily snapshot; revisit if it ever needs bounding.
+          DATE=$(date -u +%Y-%m-%d)
+          if [ -f blog/predictions.parquet ]; then
+            cp blog/predictions.parquet "blog/predictions-snapshot-${DATE}.parquet"
+          fi
+          if [ -f blog/injuries.parquet ]; then
+            cp blog/injuries.parquet "blog/injuries-snapshot-${DATE}.parquet"
+          fi
+
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
