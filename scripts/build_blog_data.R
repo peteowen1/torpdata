@@ -44,7 +44,7 @@ for (old_nm in names(ratings_renames)) {
 # keeps working unchanged and can switch to epr_contest whenever it likes. This
 # column is the only thing new here; no existing value moves.
 #
-# Two things the site should know before rendering it (inthegame-blog#... below):
+# Two things the site should know before rendering it (inthegame-blog#545):
 # it is SMALL -- sd 0.266 against disposal's 1.693, ~2% of EPR's spread, so it
 # will look flat next to the other channels and that is honest -- and
 # MIDFIELDERS top its aerial half, because of the tackles/pressure content.
