@@ -1154,3 +1154,116 @@ if (torp_loaded) {
 } else {
   message("::warning::torp package not loaded — skipping simulations")
 }
+
+# --- Player EPV breakdown: where each player's value comes from -------------
+# torp::player_epv_breakdown() splits every player-game's EPV into the 29
+# box-score categories the credit model is built from, plus a per-channel
+# `chain` residual holding the play-by-play value with no counting stat behind
+# it. Plan: torpverse/docs/plans/PLAYER-EPV-BREAKDOWN-PLAN.md.
+#
+# Aggregated to per-player-SEASON here rather than shipped per player-game: the
+# raw table is ~293k rows for 2026 alone and a browser does not need it. The
+# page wants three numbers per category -- the player, his position, the league
+# -- so all three ship in one table distinguished by `scope`, which is a single
+# join for the site instead of three files.
+#
+# NOTE ON ORDERING: build-blog-data.yml checks out torp with no `ref:`, so it
+# reads torp's DEFAULT BRANCH. This block is inert until player_epv_breakdown()
+# is on torp `main`; the exists() guard makes that a skip rather than a failure.
+if (torp_loaded && exists("player_epv_breakdown")) {
+  tryCatch({
+    seasons_bd <- sort(unique(all_ratings$season))
+    seasons_bd <- seasons_bd[!is.na(seasons_bd)]
+    bd <- data.table::as.data.table(
+      torp::player_epv_breakdown(seasons = seasons_bd))
+
+    # Per player-season. tog is per-game time on ground, so the per-80 figure
+    # divides by summed tog rather than games -- dividing per-game EPV by mean
+    # tog would over-credit anyone whose minutes vary.
+    # Collapse to one row per player-match FIRST. `bd` carries 33 category rows
+    # per player-match, all repeating the same tog, so summing tog directly
+    # would multiply every player's minutes by 33.
+    pm <- bd[, .(tog = tog[1]), by = .(player_id, season, match_id)]
+    gms <- pm[, .(games = .N, tog_sum = sum(tog, na.rm = TRUE)),
+              by = .(player_id, season)]
+
+    # position_group must NOT be a grouping key. In player_game_data it is the
+    # PER-MATCH listing (see torpverse/docs/reference/POSITIONS.md), so a player
+    # named MIDFIELDER some weeks and MIDFIELDER_FORWARD others would split into
+    # two rows per category -- each dividing by his FULL season games, so the
+    # pair still sums correctly and the identity check still passes while the
+    # profile page shows every category twice. Take his modal position instead.
+    # Tie-break EXPLICITLY. `order(-N)` is a stable sort and data.table returns
+    # groups in first-appearance order, so on a tie `.SD[1]` silently picks
+    # whichever position appeared first in `bd`'s row order -- i.e. the player's
+    # earliest game that season, which is not "modal" and is not stable if
+    # upstream row order ever shifts. Since this decides both the position shown
+    # AND which reference row he is compared against, a flip would move his
+    # comparison with no underlying stat change. Alphabetical on ties is
+    # arbitrary but deterministic, which is the property that matters.
+    # (`N` counts breakdown rows, so it is 33x games at that position -- a
+    # constant multiplier, harmless for ranking.)
+    modal_pos <- bd[!is.na(position_group),
+                    .N, by = .(player_id, season, position_group)
+                    ][order(-N, position_group), .SD[1], by = .(player_id, season)
+                      ][, .(player_id, season, position_group)]
+
+    agg <- bd[, .(epv = sum(epv, na.rm = TRUE),
+                  count = sum(stat, na.rm = TRUE)),
+              by = .(player_id, season, channel, category)]
+    agg <- merge(agg, modal_pos, by = c("player_id", "season"), all.x = TRUE)
+    agg <- merge(agg, gms, by = c("player_id", "season"))
+    agg[, `:=`(per_game = epv / games,
+               per_80 = data.table::fifelse(tog_sum > 0, epv / tog_sum, NA_real_),
+               count_per_game = count / games,
+               scope = "player")]
+
+    # POOLED, not a mean of per-player rates. The distinction is not cosmetic:
+    # a mean over qualifying players weights a 5-game player equally with a
+    # 25-game one, and "league average" on a public page reads as "what a typical
+    # game produces", not "the average across players who cleared a bar". Pooling
+    # is also independent of where that bar sits, so the number does not move if
+    # the qualification rule is ever changed.
+    #
+    # No games filter here for the same reason: with pooled weighting a one-game
+    # player contributes one game out of thousands rather than a full share, so
+    # he needs no excluding. `players` and `games` ship alongside so the site can
+    # show what the average is built from rather than being asked to trust it.
+    ref <- function(by_cols, scope_label) {
+      r <- agg[, .(per_game = sum(epv, na.rm = TRUE) / sum(games),
+                   per_80 = data.table::fifelse(
+                     sum(tog_sum, na.rm = TRUE) > 0,
+                     sum(epv, na.rm = TRUE) / sum(tog_sum, na.rm = TRUE),
+                     NA_real_),
+                   count_per_game = sum(count, na.rm = TRUE) / sum(games),
+                   players = .N,
+                   games = as.integer(sum(games))),
+               by = c(by_cols, "season", "channel", "category")]
+      r[, scope := scope_label][]
+    }
+    league <- ref(character(0), "league")
+    posn   <- ref("position_group", "position")
+
+    out <- data.table::rbindlist(list(
+      agg[, .(player_id, season, position_group, channel, category,
+              per_game, per_80, count_per_game, games, players = NA_integer_,
+              scope)],
+      league[, .(player_id = NA_character_, season, position_group = NA_character_,
+                 channel, category, per_game, per_80, count_per_game,
+                 games, players, scope)],
+      posn[, .(player_id = NA_character_, season, position_group, channel,
+               category, per_game, per_80, count_per_game, games, players, scope)]
+    ), use.names = TRUE)
+
+    write_parquet(as.data.frame(out), "blog/player-epv-breakdown.parquet")
+    cat("player-epv-breakdown:", nrow(out), "rows |",
+        uniqueN(out[scope == "player"]$player_id), "players |",
+        uniqueN(out$category), "categories |",
+        "seasons", paste(range(out$season), collapse = "-"), "\n")
+  }, error = function(e) {
+    message("::warning::Player EPV breakdown failed, skipping player-epv-breakdown.parquet: ",
+            conditionMessage(e))
+  })
+} else if (torp_loaded) {
+  message("::warning::player_epv_breakdown() not found in this torp build — skipping player-epv-breakdown.parquet (expected until torp#158 is on main)")
+}
