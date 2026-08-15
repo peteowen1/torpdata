@@ -1193,9 +1193,19 @@ if (torp_loaded && exists("player_epv_breakdown")) {
     # two rows per category -- each dividing by his FULL season games, so the
     # pair still sums correctly and the identity check still passes while the
     # profile page shows every category twice. Take his modal position instead.
+    # Tie-break EXPLICITLY. `order(-N)` is a stable sort and data.table returns
+    # groups in first-appearance order, so on a tie `.SD[1]` silently picks
+    # whichever position appeared first in `bd`'s row order -- i.e. the player's
+    # earliest game that season, which is not "modal" and is not stable if
+    # upstream row order ever shifts. Since this decides both the position shown
+    # AND which reference row he is compared against, a flip would move his
+    # comparison with no underlying stat change. Alphabetical on ties is
+    # arbitrary but deterministic, which is the property that matters.
+    # (`N` counts breakdown rows, so it is 33x games at that position -- a
+    # constant multiplier, harmless for ranking.)
     modal_pos <- bd[!is.na(position_group),
                     .N, by = .(player_id, season, position_group)
-                    ][order(-N), .SD[1], by = .(player_id, season)
+                    ][order(-N, position_group), .SD[1], by = .(player_id, season)
                       ][, .(player_id, season, position_group)]
 
     agg <- bd[, .(epv = sum(epv, na.rm = TRUE),
@@ -1208,11 +1218,26 @@ if (torp_loaded && exists("player_epv_breakdown")) {
                count_per_game = count / games,
                scope = "player")]
 
+    # POOLED, not a mean of per-player rates. The distinction is not cosmetic:
+    # a mean over qualifying players weights a 5-game player equally with a
+    # 25-game one, and "league average" on a public page reads as "what a typical
+    # game produces", not "the average across players who cleared a bar". Pooling
+    # is also independent of where that bar sits, so the number does not move if
+    # the qualification rule is ever changed.
+    #
+    # No games filter here for the same reason: with pooled weighting a one-game
+    # player contributes one game out of thousands rather than a full share, so
+    # he needs no excluding. `players` and `games` ship alongside so the site can
+    # show what the average is built from rather than being asked to trust it.
     ref <- function(by_cols, scope_label) {
-      r <- agg[games >= 5, .(per_game = mean(per_game, na.rm = TRUE),
-                             per_80 = mean(per_80, na.rm = TRUE),
-                             count_per_game = mean(count_per_game, na.rm = TRUE),
-                             players = .N),
+      r <- agg[, .(per_game = sum(epv, na.rm = TRUE) / sum(games),
+                   per_80 = data.table::fifelse(
+                     sum(tog_sum, na.rm = TRUE) > 0,
+                     sum(epv, na.rm = TRUE) / sum(tog_sum, na.rm = TRUE),
+                     NA_real_),
+                   count_per_game = sum(count, na.rm = TRUE) / sum(games),
+                   players = .N,
+                   games = as.integer(sum(games))),
                by = c(by_cols, "season", "channel", "category")]
       r[, scope := scope_label][]
     }
@@ -1221,13 +1246,13 @@ if (torp_loaded && exists("player_epv_breakdown")) {
 
     out <- data.table::rbindlist(list(
       agg[, .(player_id, season, position_group, channel, category,
-              per_game, per_80, count_per_game, games, scope)],
+              per_game, per_80, count_per_game, games, players = NA_integer_,
+              scope)],
       league[, .(player_id = NA_character_, season, position_group = NA_character_,
                  channel, category, per_game, per_80, count_per_game,
-                 games = NA_integer_, scope)],
+                 games, players, scope)],
       posn[, .(player_id = NA_character_, season, position_group, channel,
-               category, per_game, per_80, count_per_game,
-               games = NA_integer_, scope)]
+               category, per_game, per_80, count_per_game, games, players, scope)]
     ), use.names = TRUE)
 
     write_parquet(as.data.frame(out), "blog/player-epv-breakdown.parquet")
