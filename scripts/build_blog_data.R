@@ -35,11 +35,28 @@ for (old_nm in names(ratings_renames)) {
   }
 }
 
+# Merged contest channel for the site (torp 1.3.26). Neither half is what its
+# name says -- epr_spoil is spoils PLUS tackles PLUS pressure, epr_hitout is
+# hitouts PLUS ruck contests -- so both are contest value and the sum is what a
+# reader should see. torp's plot_team_ratings()/team_profile now display it.
+#
+# ADDITIVE on purpose: epr_spoil and epr_hitout stay in the parquet so the site
+# keeps working unchanged and can switch to epr_contest whenever it likes. This
+# column is the only thing new here; no existing value moves.
+#
+# Two things the site should know before rendering it (inthegame-blog#545):
+# it is SMALL -- sd 0.266 against disposal's 1.693, ~2% of EPR's spread, so it
+# will look flat next to the other channels and that is honest -- and
+# MIDFIELDERS top its aerial half, because of the tackles/pressure content.
+if (all(c("epr_spoil", "epr_hitout") %in% names(all_ratings))) {
+  all_ratings$epr_contest <- all_ratings$epr_spoil + all_ratings$epr_hitout
+}
+
 ratings <- all_ratings |>
   select(player_id, player_name, team,
          any_of(c("position_group", "lineup_position", "position")),
          torp, epr_recv, epr_disp,
-         epr_spoil, epr_hitout, gms, season, round,
+         epr_spoil, epr_hitout, any_of("epr_contest"), gms, season, round,
          any_of(c("epr", "psr", "osr", "dsr"))) |>
   arrange(desc(torp))
 
@@ -48,6 +65,15 @@ teams <- read_parquet("source/team_ratings.parquet")
 latest_teams <- teams |>
   filter(season == max(season, na.rm = TRUE)) |>
   filter(round == max(as.numeric(round), na.rm = TRUE))
+
+# Same merged contest channel at team level, same additive rule -- the two halves
+# stay. NB the team columns are each round()ed to 2dp upstream, so the channel
+# split reconciles to team_epr only within ~0.02; that is pre-existing and adding
+# these two terms together does not widen it.
+if (all(c("team_epr_spoil", "team_epr_hitout") %in% names(latest_teams))) {
+  latest_teams$team_epr_contest <-
+    latest_teams$team_epr_spoil + latest_teams$team_epr_hitout
+}
 
 # Match predictions - all seasons, handle both processed (2026+) and raw (2025) formats
 pred_files <- list.files("source", pattern = "^predictions_", full.names = TRUE)
