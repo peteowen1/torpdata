@@ -323,7 +323,15 @@ game_raw <- lapply(game_files, read_parquet) |> bind_rows()
 # AFL stat on the site silently doubled (114,808 rows against 57,404 unique)
 # while this build reported success. Filenames are one way in; this catches all
 # of them, including whatever the next one turns out to be.
-if (all(c("player_id", "match_id") %in% names(game_raw))) {
+if (!all(c("player_id", "match_id") %in% names(game_raw))) {
+  # Not a skippable condition. Without both keys this check cannot run at all,
+  # and a guard that quietly disables itself when a column is renamed is worse
+  # than no guard -- the build would go on to publish whatever it had. A later
+  # required-columns check would also catch this today, but relying on that
+  # makes correctness here depend on a check thirty lines away.
+  stop("game-logs: player_id/match_id not both present, so duplicate rows cannot be checked for. ",
+       "Columns seen: ", paste(names(game_raw), collapse = ", "))
+} else {
   n_dup <- sum(duplicated(game_raw[, c("player_id", "match_id")]))
   if (n_dup > 0) {
     stop(sprintf(
