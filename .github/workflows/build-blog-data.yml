@@ -125,8 +125,16 @@ jobs:
           fi
 
           # Per-game ratings (all available seasons for game logs)
-          if gh release download player_game_ratings-data -p "player_game_ratings_*.parquet" -D source; then
-            count=$(ls source/player_game_ratings_*.parquet 2>/dev/null | wc -l)
+          #
+          # FOUR DIGITS THEN .parquet, deliberately -- not a bare wildcard. A
+          # CANDIDATE rating vintage publishes alongside canonical as
+          # player_game_ratings_2026_v3.parquet, and "player_game_ratings_*"
+          # matches both. The build then row-binds canonical and candidate, so
+          # every player-match appears twice: on 2026-08-18 that doubled every
+          # cumulative AFL stat on the site (114,808 rows where 57,404 are
+          # unique) while this workflow reported success.
+          if gh release download player_game_ratings-data -p "player_game_ratings_[0-9][0-9][0-9][0-9].parquet" -D source; then
+            count=$(ls source/player_game_ratings_[0-9][0-9][0-9][0-9].parquet 2>/dev/null | wc -l)
             if [ "$count" -eq 0 ]; then
               echo "::error::gh reported success but no player_game_ratings files found on disk"
               exit 1
@@ -138,9 +146,11 @@ jobs:
           fi
 
           # Raw game stats (box-score stats for match page toggle — optional)
-          # Pattern: player_game_YYYY.parquet (NOT player_game_ratings_*)
-          if gh release download player_game-data -p "player_game_[0-9]*.parquet" -D source; then
-            count=$(ls source/player_game_[0-9]*.parquet 2>/dev/null | wc -l)
+          # Pattern: player_game_YYYY.parquet (NOT player_game_ratings_*, and
+          # NOT a candidate vintage's player_game_YYYY_v3.parquet -- "[0-9]*"
+          # is one digit followed by anything, so it matched those too).
+          if gh release download player_game-data -p "player_game_[0-9][0-9][0-9][0-9].parquet" -D source; then
+            count=$(ls source/player_game_[0-9][0-9][0-9][0-9].parquet 2>/dev/null | wc -l)
             echo "Downloaded raw game stats: ${count} files"
           else
             echo "::warning::No raw game stats available, match stats toggle will be skipped"
