@@ -308,9 +308,40 @@ details <- details_raw |>
   )
 
 # Game logs - per-game TORP ratings (up to 5 seasons, depending on source data)
-game_files <- list.files("source", pattern = "^player_game_ratings_", full.names = TRUE)
+# Season files only: four digits then .parquet. A bare prefix match also picks
+# up a CANDIDATE rating vintage (player_game_ratings_2026_v3.parquet), which
+# row-binds a second copy of every player-match.
+game_files <- list.files("source", pattern = "^player_game_ratings_[0-9]{4}[.]parquet$",
+                         full.names = TRUE)
 if (length(game_files) == 0) stop("No player_game_ratings files found in source/")
 game_raw <- lapply(game_files, read_parquet) |> bind_rows()
+
+# A player cannot play the same match twice, so a duplicated player_id+match_id
+# means two sources of the same game were combined. Asserted here rather than
+# trusting the filename patterns above: on 2026-08-18 a candidate vintage
+# published alongside canonical matched the download glob, and every cumulative
+# AFL stat on the site silently doubled (114,808 rows against 57,404 unique)
+# while this build reported success. Filenames are one way in; this catches all
+# of them, including whatever the next one turns out to be.
+if (!all(c("player_id", "match_id") %in% names(game_raw))) {
+  # Not a skippable condition. Without both keys this check cannot run at all,
+  # and a guard that quietly disables itself when a column is renamed is worse
+  # than no guard -- the build would go on to publish whatever it had. A later
+  # required-columns check would also catch this today, but relying on that
+  # makes correctness here depend on a check thirty lines away.
+  stop("game-logs: player_id/match_id not both present, so duplicate rows cannot be checked for. ",
+       "Columns seen: ", paste(names(game_raw), collapse = ", "))
+} else {
+  n_dup <- sum(duplicated(game_raw[, c("player_id", "match_id")]))
+  if (n_dup > 0) {
+    stop(sprintf(
+      paste0("game-logs: %d duplicated player_id+match_id rows out of %d.\n",
+             "Two sources of the same game were combined -- check for a candidate ",
+             "rating vintage in source/ alongside the canonical season files.\n",
+             "Files read: %s"),
+      n_dup, nrow(game_raw), paste(basename(game_files), collapse = ", ")))
+  }
+}
 # Handle column name evolution: total_points → epv_raw → epv (current).
 # Targets are metric-first (epv_recv, ...) per torp#81. The interim
 # component-first source names (recv_epv, ...) are upgraded defensively so a
