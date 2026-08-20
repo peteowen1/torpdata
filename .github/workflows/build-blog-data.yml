@@ -216,6 +216,28 @@ jobs:
             echo "::warning::teams_${YEAR}.parquet not available — lineups won't update"
           fi
 
+          # Matchup table → matchup-table.parquet
+          # inthegame-blog prices EVERY finals tie from this file: its
+          # resolveFinal() overrides the strength formula whenever a row is
+          # found, and the table covers all 306 ordered pairs in both venue
+          # contexts, so a row is always found. Built fresh each run by torp's
+          # daily-ratings-predictions workflow, which gates it before release.
+          # Warn-don't-fail: on a miss the blog keeps the previous table, and
+          # its simulator prices the current injury list into finals itself
+          # whenever the table's round stamp is behind the round being played.
+          if gh release download matchup-table-data -p "matchup_table_${YEAR}.parquet" -D blog; then
+            SIZE=$(stat -c%s "blog/matchup_table_${YEAR}.parquet")
+            if [ "$SIZE" -lt 5000 ]; then
+              echo "::warning::matchup_table_${YEAR}.parquet suspiciously small (${SIZE} bytes) — removing rather than shipping a truncated finals-pricing table"
+              rm "blog/matchup_table_${YEAR}.parquet"
+            else
+              mv "blog/matchup_table_${YEAR}.parquet" "blog/matchup-table.parquet"
+              echo "Downloaded matchup_table_${YEAR}.parquet (${SIZE} bytes) → matchup-table.parquet"
+            fi
+          else
+            echo "::warning::matchup_table_${YEAR}.parquet not available — finals pricing keeps the previously published table"
+          fi
+
           # Player skills → player-skills.parquet
           if gh release download player_skills-data -p "player_skills_${YEAR}.parquet" -D blog; then
             SIZE=$(stat -c%s "blog/player_skills_${YEAR}.parquet")
@@ -260,7 +282,7 @@ jobs:
 
           # Optional — warn but don't fail
           YEAR=$(date +%Y)
-          for f in simulations.parquet team-strength.parquet shots.parquet game-stats.parquet player-skills.parquet player-skills-history.parquet player-finishing.parquet "chains-${YEAR}.parquet"; do
+          for f in simulations.parquet team-strength.parquet shots.parquet game-stats.parquet player-skills.parquet player-skills-history.parquet player-finishing.parquet matchup-table.parquet "chains-${YEAR}.parquet"; do
             if [ ! -f "blog/$f" ]; then
               echo "::warning::Optional output blog/$f was not produced"
             fi
