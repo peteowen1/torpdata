@@ -51,7 +51,12 @@ PBP_COLS <- c(
   "team_id", "player_id", "player_name", "lead_player_id", "pos_team",
   "wp", "wpa", "delta_epv", "x", "y", "disposal",
   "home_team_id", "home_team_name", "away_team_name",
-  "team", "utc_start_time"
+  "team", "utc_start_time",
+  # torpdata#85: the chain-level possessing team, which defines the coordinate
+  # frame for every (x, y) in this chain -- team_id is the ACTOR, not the
+  # frame, and the two disagree on opponent-actor rows by construction
+  # (clean_pbp.R step G). Falls back to team_id_mdl for pre-torp#92 seasons.
+  "coord_team_id", "coord_home_team_id"
 )
 
 # Final output column order — plan's target table first, then the extras
@@ -62,7 +67,10 @@ OUTPUT_COLS <- c(
   "team_id", "player_id", "player_name", "lead_player_id", "pos_team",
   "wp", "wpa", "wpa_disp", "wpa_recv", "delta_ep", "player_credit",
   # extras (existing chain-viz / pass-map consumers)
-  "x", "y", "disposal", "initial_state", "home_team_id", "home_team", "away_team"
+  "x", "y", "disposal", "initial_state", "home_team_id", "home_team", "away_team",
+  # torpdata#85: coordinate-frame team, so the blog can orient (x, y) without
+  # a per-page heuristic
+  "coord_team_id", "coord_home_team_id"
 )
 
 for (season in seasons) {
@@ -218,7 +226,9 @@ for (season in seasons) {
     initial_state,
     home_team_id,
     home_team = home_team_name,
-    away_team = away_team_name
+    away_team = away_team_name,
+    coord_team_id,
+    coord_home_team_id
   )]
   data.table::setcolorder(out, OUTPUT_COLS)
 
