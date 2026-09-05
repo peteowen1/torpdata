@@ -21,6 +21,17 @@
 # WP/WPA-split columns) is removed in the same commit as this script, so
 # there is exactly one writer of blog/chains-{season}.parquet.
 #
+# BACKFILL GOTCHA — check before adding any NEW column to PBP_COLS below.
+# load_pbp()'s column selection uses dplyr::any_of(), which SILENTLY DROPS a
+# requested column that a given season's released parquet does not have. The
+# bare-symbol projection at the bottom of this script then hard-crashes on that
+# season with "object not found" rather than degrading. So a column is only safe
+# to add here once every pbp_data_{season}_all.parquet in the release has it --
+# which means after the historical rebuild that regenerated them, not merely
+# after the torp code that computes it. Verified 2026-09-04 for coord_team_id /
+# coord_home_team_id / the five contest_* columns: all present in 2021 through
+# 2026, so `Rscript build_afl_chains.R 2021 ... 2025` works today.
+#
 # Usage:
 #   Rscript scripts/build_afl_chains.R            # current season only
 #   Rscript scripts/build_afl_chains.R 2024 2025   # backfill specific seasons
