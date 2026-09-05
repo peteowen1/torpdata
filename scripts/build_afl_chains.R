@@ -56,7 +56,18 @@ PBP_COLS <- c(
   # frame for every (x, y) in this chain -- team_id is the ACTOR, not the
   # frame, and the two disagree on opponent-actor rows by construction
   # (clean_pbp.R step G). Falls back to team_id_mdl for pre-torp#92 seasons.
-  "coord_team_id", "coord_home_team_id"
+  "coord_team_id", "coord_home_team_id",
+  # torpdata#82: aerial-contest detail. The Spoil / Contest Target ROWS are
+  # dropped upstream by EPV_RELEVANT_DESCRIPTIONS (clean_features.R) before
+  # this script ever runs, but add_contest_vars_dt() (clean_pbp.R) deliberately
+  # collapses their information onto the preceding Kick row first -- so the
+  # duel is recoverable from these columns without touching that whitelist.
+  # Widening the whitelist instead would be a rating change, not an additive
+  # one: the filter runs BEFORE the lag/lead features are built, so restoring
+  # rows shifts every neighbouring row's "previous event" and moves delta_epv,
+  # player credit, and published EPR. Measured 2026-09-04, hence this route.
+  "contest_target_id", "contest_target_team_id",
+  "contest_defender_id", "contest_defender_team_id", "contest_outcome"
 )
 
 # Final output column order — plan's target table first, then the extras
@@ -70,7 +81,11 @@ OUTPUT_COLS <- c(
   "x", "y", "disposal", "initial_state", "home_team_id", "home_team", "away_team",
   # torpdata#85: coordinate-frame team, so the blog can orient (x, y) without
   # a per-page heuristic
-  "coord_team_id", "coord_home_team_id"
+  "coord_team_id", "coord_home_team_id",
+  # torpdata#82: aerial-contest detail, so the contest boards are computable
+  # client-side (populated on contest Kick rows only -- ~1.7% of rows)
+  "contest_target_id", "contest_target_team_id",
+  "contest_defender_id", "contest_defender_team_id", "contest_outcome"
 )
 
 for (season in seasons) {
@@ -228,7 +243,12 @@ for (season in seasons) {
     home_team = home_team_name,
     away_team = away_team_name,
     coord_team_id,
-    coord_home_team_id
+    coord_home_team_id,
+    contest_target_id,
+    contest_target_team_id,
+    contest_defender_id,
+    contest_defender_team_id,
+    contest_outcome
   )]
   data.table::setcolorder(out, OUTPUT_COLS)
 
