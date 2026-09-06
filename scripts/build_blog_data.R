@@ -105,7 +105,7 @@ preds_list <- lapply(pred_files, function(f) {
         home_epr = round(home_epr, 1),
         away_epr = round(away_epr, 1),
         pred_margin = round(pred_margin, 1),
-        home_win_prob = round(pred_win, 3),
+        home_win_prob = round(pmin(pmax(pred_win, 0.001), 0.999), 3),  # FABLE-redteam-2026-09-07 F4: never publish 0/1 after 3dp rounding
         pred_total = round(pred_xtotal, 0),
         actual_margin = margin,
         start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
@@ -123,7 +123,7 @@ preds_list <- lapply(pred_files, function(f) {
         home_epr = round(torp.x, 1),
         away_epr = round(torp.y, 1),
         pred_margin = round(pred_score_diff, 1),
-        home_win_prob = round(pred_win, 3),
+        home_win_prob = round(pmin(pmax(pred_win, 0.001), 0.999), 3),  # FABLE-redteam-2026-09-07 F4: never publish 0/1 after 3dp rounding
         pred_total = round(pred_tot_xscore, 0),
         actual_margin = score_diff,
         start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
@@ -164,7 +164,7 @@ if (length(retro_files) > 0) {
       season = !!season, round = week,
       home_team = as.character(home_team), away_team = as.character(away_team),
       home_epr = round(home_epr, 1), away_epr = round(away_epr, 1),
-      pred_margin = round(pred_margin, 1), home_win_prob = round(pred_win, 3),
+      pred_margin = round(pred_margin, 1), home_win_prob = round(pmin(pmax(pred_win, 0.001), 0.999), 3),  # FABLE-redteam-2026-09-07 F4: never publish 0/1 after 3dp rounding
       pred_total = round(pred_xtotal, 0), actual_margin = margin,
       start_time = if ("start_time" %in% names(r)) start_time else NA_character_,
       venue = if ("venue" %in% names(r)) as.character(venue) else NA_character_
