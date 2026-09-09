@@ -373,13 +373,28 @@ if (length(missing_game_cols) > 0) {
 has_psv <- "psv" %in% names(game_raw)
 # Per-game value is EPV (Expected Possession Value). Source columns are now
 # metric-first (epv, epv_recv, ...) per torp#81, so they pass straight through.
+#
+# net_points (torp#188/#203, 2026-09-09): `epv` is position-centred and
+# opponent-adjusted, so a team's players do not sum to that team's own match
+# margin (mean gap 9.56 points). net_points carries the raw ledger value
+# through untouched -- verified to sum to the own margin exactly on the
+# release. NOT required: older player_game_ratings parquets predate it, and a
+# missing column here should degrade gracefully rather than fail the whole
+# build. See inthegame-blog#679 for wiring it into the match-page display
+# (the public label stays "EPV" -- net_points is a data name only).
 game_logs <- game_raw |>
   select(player_id, player_name, season, round, team, opp,
          epv, epv_recv, epv_disp, epv_spoil, epv_hitout,
+         any_of("net_points"),
          any_of(c("wp_credit", "wp_disp_credit", "wp_recv_credit")),
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
   arrange(player_id, season, round)
+if (!"net_points" %in% names(game_logs)) {
+  message("game-logs: no net_points column upstream (pre-torp#203 parquet?) -- ",
+          "match-page EPV will keep reading the centred/adjusted epv until a ",
+          "fresh player_game_ratings build supplies it.")
+}
 
 # Join date from fixtures (CI downloads to source/, local dev has them in data/)
 fixtures_data_files <- list.files("source", pattern = "^fixtures_.*\\.parquet$", full.names = TRUE)
