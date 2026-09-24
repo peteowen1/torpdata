@@ -252,6 +252,24 @@ jobs:
             echo "::warning::player_skills_${YEAR}.parquet not available — skills data won't update"
           fi
 
+          # Net Points by play type → np-breakdown-YEAR.parquet
+          # One row per player-match-category (match_id, player_id, category,
+          # value); a player-match's rows add up exactly to the net_points in
+          # game-logs.parquet. torp gates that identity before releasing the file
+          # (create_player_game_data(), .np_breakdown()). Optional: warn, don't fail.
+          if gh release download player_game-data -p "np_breakdown_${YEAR}.parquet" -D blog; then
+            SIZE=$(stat -c%s "blog/np_breakdown_${YEAR}.parquet")
+            if [ "$SIZE" -lt 1000 ]; then
+              echo "::warning::np_breakdown_${YEAR}.parquet suspiciously small (${SIZE} bytes) — removing"
+              rm "blog/np_breakdown_${YEAR}.parquet"
+            else
+              mv "blog/np_breakdown_${YEAR}.parquet" "blog/np-breakdown-${YEAR}.parquet"
+              echo "Downloaded np_breakdown_${YEAR}.parquet (${SIZE} bytes) → np-breakdown-${YEAR}.parquet"
+            fi
+          else
+            echo "::warning::np_breakdown_${YEAR}.parquet not available — the Net Points breakdown won't update"
+          fi
+
           # Player skills history (all seasons, rating cols only) → player-skills-history.parquet
           # Lazy-loaded by the blog age-curves page only — optional, warn don't fail.
           if gh release download player_skills-data -p "player_skills_history.parquet" -D blog; then
