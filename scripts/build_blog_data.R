@@ -387,6 +387,11 @@ game_logs <- game_raw |>
          epv, epv_recv, epv_disp, epv_spoil, epv_hitout,
          any_of("net_points"),
          any_of(c("wp_credit", "wp_disp_credit", "wp_recv_credit")),
+         # WPA ledger (torpverse/docs/plans/WPA-NET-LEDGER.md): wpa_net sums
+         # per team to result minus pre-match forecast; wpa_neutral starts
+         # every match at an even chance with a home edge. Optional until a
+         # torp release carries them.
+         any_of(c("wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team")),
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
   arrange(player_id, season, round)
@@ -394,6 +399,42 @@ if (!"net_points" %in% names(game_logs)) {
   message("game-logs: no net_points column upstream (pre-torp#203 parquet?) -- ",
           "match-page EPV will keep reading the centred/adjusted epv until a ",
           "fresh player_game_ratings build supplies it.")
+}
+
+# Coverage gate: a value column that is present must be populated. On
+# 2026-09-26 the 13:12 UTC build published a game-logs.parquet the blog read as
+# blank EPV/TOPV and PSV 0.00, and it served for 16 minutes with nothing
+# failing. Presence was never the problem, coverage was. Checked on the
+# latest season, where a broken upstream run shows first. wpa_net is allowed
+# NA only for matches with no pre-match forecast (2021 rounds 1-13), so it is
+# held to the same bar on the latest season and nowhere else.
+# net_points and psv are REQUIRED now: every current torp release carries
+# them, and a file without them is what the blog shows as blank EPV and PSV 0.
+absent <- setdiff(c("net_points", "psv"), names(game_logs))
+if (length(absent)) {
+  stop("game-logs: upstream player_game_ratings has no ", paste(absent, collapse = ", "),
+       " -- refusing to publish a game-logs file the blog would show as blank EPV / zero PSV")
+}
+# Two strengths. net_points and psv are what the blog shows today: any gap
+# stops the build. The WPA ledger columns can be legitimately NA for a match
+# with no pre-match forecast, or one torp could not rate, so a partial gap is
+# a warning with the count; only a WHOLLY blank latest season stops the
+# build, because that can only mean torp's WPA step failed (locked forecasts
+# exist for every played match from 2026 R13 on). Without that split a WPA
+# gap would hold back EPV and PSV, which have nothing to do with it.
+latest_season <- max(game_logs$season, na.rm = TRUE)
+latest_gl <- game_logs[game_logs$season == latest_season, , drop = FALSE]
+for (gc in intersect(c("net_points", "psv", "wpa_net", "wpa_neutral"), names(game_logs))) {
+  n_na <- sum(is.na(latest_gl[[gc]]))
+  message(sprintf("game-logs coverage: %s %d/%d populated in %s", gc,
+                  nrow(latest_gl) - n_na, nrow(latest_gl), latest_season))
+  if (n_na == 0) next
+  if (gc %in% c("net_points", "psv") || n_na == nrow(latest_gl)) {
+    stop(sprintf("game-logs: %s is NA on %d of %d rows in %s -- refusing to publish a blank column",
+                 gc, n_na, nrow(latest_gl), latest_season))
+  }
+  warning(sprintf("game-logs: %s is NA on %d of %d rows in %s (matches with no forecast or not rated); publishing, the blog shows those as blank",
+                  gc, n_na, nrow(latest_gl), latest_season), call. = FALSE)
 }
 
 # Join date from fixtures (CI downloads to source/, local dev has them in data/)
