@@ -387,6 +387,11 @@ game_logs <- game_raw |>
          epv, epv_recv, epv_disp, epv_spoil, epv_hitout,
          any_of("net_points"),
          any_of(c("wp_credit", "wp_disp_credit", "wp_recv_credit")),
+         # WPA ledger (torpverse/docs/plans/WPA-NET-LEDGER.md): wpa_net sums
+         # per team to result minus pre-match forecast; wpa_neutral starts
+         # every match at an even chance with a home edge. Optional until a
+         # torp release carries them.
+         any_of(c("wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team")),
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
   arrange(player_id, season, round)
