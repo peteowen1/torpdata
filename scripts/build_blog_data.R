@@ -401,6 +401,32 @@ if (!"net_points" %in% names(game_logs)) {
           "fresh player_game_ratings build supplies it.")
 }
 
+# Coverage gate: a value column that is present must be populated. On
+# 2026-09-26 the 13:12 UTC build published a game-logs.parquet the blog read as
+# blank EPV/TOPV and PSV 0.00, and it served for 16 minutes with nothing
+# failing. Presence was never the problem, coverage was. Checked on the
+# latest season, where a broken upstream run shows first. wpa_net is allowed
+# NA only for matches with no pre-match forecast (2021 rounds 1-13), so it is
+# held to the same bar on the latest season and nowhere else.
+# net_points and psv are REQUIRED now: every current torp release carries
+# them, and a file without them is what the blog shows as blank EPV and PSV 0.
+absent <- setdiff(c("net_points", "psv"), names(game_logs))
+if (length(absent)) {
+  stop("game-logs: upstream player_game_ratings has no ", paste(absent, collapse = ", "),
+       " -- refusing to publish a game-logs file the blog would show as blank EPV / zero PSV")
+}
+gate_cols <- intersect(c("net_points", "psv", "wpa_net", "wpa_neutral"), names(game_logs))
+latest_gl <- game_logs[game_logs$season == max(game_logs$season, na.rm = TRUE), , drop = FALSE]
+for (gc in gate_cols) {
+  n_na <- sum(is.na(latest_gl[[gc]]))
+  message(sprintf("game-logs coverage: %s %d/%d populated in %s", gc,
+                  nrow(latest_gl) - n_na, nrow(latest_gl), max(game_logs$season, na.rm = TRUE)))
+  if (n_na > 0) {
+    stop(sprintf("game-logs: %s is NA on %d of %d rows in the latest season -- refusing to publish a partly blank column",
+                 gc, n_na, nrow(latest_gl)))
+  }
+}
+
 # Join date from fixtures (CI downloads to source/, local dev has them in data/)
 fixtures_data_files <- list.files("source", pattern = "^fixtures_.*\\.parquet$", full.names = TRUE)
 if (length(fixtures_data_files) == 0) {
