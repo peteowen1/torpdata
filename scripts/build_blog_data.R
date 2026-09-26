@@ -415,16 +415,26 @@ if (length(absent)) {
   stop("game-logs: upstream player_game_ratings has no ", paste(absent, collapse = ", "),
        " -- refusing to publish a game-logs file the blog would show as blank EPV / zero PSV")
 }
-gate_cols <- intersect(c("net_points", "psv", "wpa_net", "wpa_neutral"), names(game_logs))
-latest_gl <- game_logs[game_logs$season == max(game_logs$season, na.rm = TRUE), , drop = FALSE]
-for (gc in gate_cols) {
+# Two strengths. net_points and psv are what the blog shows today: any gap
+# stops the build. The WPA ledger columns can be legitimately NA for a match
+# with no pre-match forecast, or one torp could not rate, so a partial gap is
+# a warning with the count; only a WHOLLY blank latest season stops the
+# build, because that can only mean torp's WPA step failed (locked forecasts
+# exist for every played match from 2026 R13 on). Without that split a WPA
+# gap would hold back EPV and PSV, which have nothing to do with it.
+latest_season <- max(game_logs$season, na.rm = TRUE)
+latest_gl <- game_logs[game_logs$season == latest_season, , drop = FALSE]
+for (gc in intersect(c("net_points", "psv", "wpa_net", "wpa_neutral"), names(game_logs))) {
   n_na <- sum(is.na(latest_gl[[gc]]))
   message(sprintf("game-logs coverage: %s %d/%d populated in %s", gc,
-                  nrow(latest_gl) - n_na, nrow(latest_gl), max(game_logs$season, na.rm = TRUE)))
-  if (n_na > 0) {
-    stop(sprintf("game-logs: %s is NA on %d of %d rows in the latest season -- refusing to publish a partly blank column",
-                 gc, n_na, nrow(latest_gl)))
+                  nrow(latest_gl) - n_na, nrow(latest_gl), latest_season))
+  if (n_na == 0) next
+  if (gc %in% c("net_points", "psv") || n_na == nrow(latest_gl)) {
+    stop(sprintf("game-logs: %s is NA on %d of %d rows in %s -- refusing to publish a blank column",
+                 gc, n_na, nrow(latest_gl), latest_season))
   }
+  warning(sprintf("game-logs: %s is NA on %d of %d rows in %s (matches with no forecast or not rated); publishing, the blog shows those as blank",
+                  gc, n_na, nrow(latest_gl), latest_season), call. = FALSE)
 }
 
 # Join date from fixtures (CI downloads to source/, local dev has them in data/)
