@@ -391,9 +391,11 @@ game_logs <- game_raw |>
          any_of(c("wp_credit", "wp_disp_credit", "wp_recv_credit")),
          # WPA ledger (torpverse/docs/plans/WPA-NET-LEDGER.md): wpa_net sums
          # per team to result minus pre-match forecast; wpa_neutral starts
-         # every match at an even chance with a home edge. Optional until a
-         # torp release carries them.
-         any_of(c("wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team")),
+         # every match at an even chance with a home edge -- the blog's default
+         # WPA since 2026-09-28, with its own three parts (wpa_neutral_*).
+         # Optional until a torp release carries them.
+         any_of(c("wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team",
+                  "wpa_neutral_own", "wpa_neutral_won", "wpa_neutral_team")),
          # net_points in the same three parts, uncentred (torp .np_raw_parts()):
          # they add up to net_points, where epv_recv/disp/spoil are centred for
          # the rating and add up to `epv`. Optional until a torp release has them.
@@ -408,6 +410,7 @@ game_logs <- game_raw |>
   # and let parts-vs-EPV differ by 0.02 on screen (measured 2026-09-27).
   mutate(across(any_of(c("net_points", "np_own", "np_won", "np_team",
                          "wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team",
+                         "wpa_neutral_own", "wpa_neutral_won", "wpa_neutral_team",
                          "psv", "osv", "dsv")), ~ round(.x, 4)))
 if (!"net_points" %in% names(game_logs)) {
   message("game-logs: no net_points column upstream (pre-torp#203 parquet?) -- ",
@@ -438,7 +441,7 @@ if (length(absent)) {
 # gap would hold back EPV and PSV, which have nothing to do with it.
 latest_season <- max(game_logs$season, na.rm = TRUE)
 latest_gl <- game_logs[game_logs$season == latest_season, , drop = FALSE]
-for (gc in intersect(c("net_points", "psv", "wpa_net", "wpa_neutral"), names(game_logs))) {
+for (gc in intersect(c("net_points", "psv", "wpa_net", "wpa_neutral", "wpa_neutral_own"), names(game_logs))) {
   n_na <- sum(is.na(latest_gl[[gc]]))
   message(sprintf("game-logs coverage: %s %d/%d populated in %s", gc,
                   nrow(latest_gl) - n_na, nrow(latest_gl), latest_season))
