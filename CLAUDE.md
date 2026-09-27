@@ -30,8 +30,9 @@ Each data type has its own GitHub release tag:
 - `weather-data`, `injury-data`, `retrodictions`, `reference-data`
 - `player_stat_ratings-data`, `player_skills-data`, `psr-data`
 
-(The 58 per-stat GAMs and core EP/WP/shot/match models are released via
-torpmodels' `stat-models` and `core-models` tags, not stored here.)
+(The per-stat GAMs — 84 as of 2026-09-27, count drifts as stats are added — and
+core EP/WP/shot/match models are released via torpmodels' `stat-models` and
+`core-models` tags, not stored here.)
 
 ## How Data Gets Here
 
@@ -42,7 +43,7 @@ torpmodels' `stat-models` and `core-models` tags, not stored here.)
 ## GitHub Actions
 
 ### `daily-data-release.yml`
-Runs daily at 16:00 UTC (2:00 AM AEST). Can also be manually dispatched with `force_release` and `rebuild_aggregates` flags.
+Runs on a multi-cron schedule tied to AFL game end times Thursday-Monday (each check is a cheap ~30s no-op via `has_new_games()` when nothing's new), plus a 2:00 AM AEST daily cron as a safety net for anything missed overnight. Can also be manually dispatched with `force_release` and `rebuild_aggregates` flags.
 
 **Flow:**
 1. Checks out torpdata + torp, installs R dependencies
