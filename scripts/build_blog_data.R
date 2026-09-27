@@ -1,6 +1,40 @@
 library(arrow)
 library(dplyr)
 
+# Write a parquet as one row group per value of `by[1]` (rows sorted by `by`),
+# so the blog's fetchParquet filter can skip every other group using each
+# group's min/max statistics. A single-row-group file cannot be skipped into:
+# /afl/match read all 344,365 rows of match-events-2026 (4.0 MB, ~9 s on the
+# page) to use one round's 1,425. Grouped by round, that read is 0.54 MB
+# (measured 2026-09-27, best of three); a whole-file read costs ~16% more bytes
+# at the same parse speed. Used for match-events only: it is one season per
+# file, so round-first keeps it in time order. game-logs and shots span seasons,
+# and blog code has assumed their time order (three first-row-wins bugs,
+# 2026-09); grouping them by season+round kept that order but made game-logs
+# 77% and shots 190% bigger for every whole-file reader. Keep SNAPPY: the blog loads plain hyparquet with no
+# extra decompressors, so zstd or gzip would break every page that reads these.
+write_parquet_grouped <- function(df, path, by) {
+  df <- as.data.frame(df)
+  df <- df[do.call(order, c(unname(as.list(df[by])), na.last = TRUE)), , drop = FALSE]
+  grp <- match(df[[by[1]]], unique(df[[by[1]]]))  # NA keys form their own group
+  starts <- c(1L, which(diff(grp) != 0L) + 1L)
+  ends <- c(starts[-1] - 1L, nrow(df))
+  tbl <- arrow::arrow_table(df)
+  sink <- arrow::FileOutputStream$create(path)
+  props <- arrow::ParquetWriterProperties$create(names(df), compression = "snappy")
+  writer <- arrow::ParquetFileWriter$create(tbl$schema, sink, properties = props)
+  for (i in seq_along(starts)) {
+    writer$WriteTable(tbl[starts[i]:ends[i], ], chunk_size = ends[i] - starts[i] + 1L)
+  }
+  writer$Close()
+  sink$close()
+  n_rg <- arrow::ParquetFileReader$create(path)$num_row_groups
+  if (n_rg != length(starts)) {
+    stop(sprintf("%s: wrote %d row groups, expected %d (one per %s)", path, n_rg, length(starts), by[1]))
+  }
+  invisible(n_rg)
+}
+
 # Load torp package for team name normalization (AFL_TEAM_ALIASES + torp_replace_teams)
 # Wrapped in tryCatch — missing deps (ggplot2, httr, lubridate) shouldn't block the pipeline
 torp_loaded <- FALSE
@@ -807,7 +841,7 @@ if (length(pbp_files) > 0) {
                is_contested, is_ineffective, is_goal, is_free_against, role)
 
       out_name <- paste0("match-events-", pbp_season, ".parquet")
-      write_parquet(events, file.path("blog", out_name))
+      write_parquet_grouped(events, file.path("blog", out_name), c("round", "player_id"))
       cat(out_name, ":", nrow(events), "events\n")
     }
   }, error = function(e) {
