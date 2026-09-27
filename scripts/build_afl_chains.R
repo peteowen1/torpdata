@@ -78,7 +78,13 @@ PBP_COLS <- c(
   # rows shifts every neighbouring row's "previous event" and moves delta_epv,
   # player credit, and published EPR. Measured 2026-09-04, hence this route.
   "contest_target_id", "contest_target_team_id",
-  "contest_defender_id", "contest_defender_team_id", "contest_outcome"
+  "contest_defender_id", "contest_defender_team_id", "contest_outcome",
+  # The chain replay shows expected score before and after each action, and
+  # draws each ground at its real size: exp_pts is the state BEFORE the action
+  # (exp_pts + delta_ep == the next same-team row's exp_pts, median gap 0.0
+  # over 288,401 pairs, 2026), and venue_length / venue_width are the AFL API's
+  # per-match ground dimensions in metres (x/y are true metres at that size).
+  "exp_pts", "venue_name", "venue_length", "venue_width"
 )
 
 # Final output column order — plan's target table first, then the extras
@@ -96,7 +102,9 @@ OUTPUT_COLS <- c(
   # torpdata#82: aerial-contest detail, so the contest boards are computable
   # client-side (populated on contest Kick rows only -- ~1.7% of rows)
   "contest_target_id", "contest_target_team_id",
-  "contest_defender_id", "contest_defender_team_id", "contest_outcome"
+  "contest_defender_id", "contest_defender_team_id", "contest_outcome",
+  # expected score before the action, and the ground (see PBP_COLS)
+  "exp_pts", "venue_name", "venue_length", "venue_width"
 )
 
 for (season in seasons) {
@@ -259,7 +267,11 @@ for (season in seasons) {
     contest_target_team_id,
     contest_defender_id,
     contest_defender_team_id,
-    contest_outcome
+    contest_outcome,
+    exp_pts = round(exp_pts, 4),
+    venue_name,
+    venue_length,
+    venue_width
   )]
   data.table::setcolorder(out, OUTPUT_COLS)
 
