@@ -15,6 +15,13 @@ library(dplyr)
 # extra decompressors, so zstd or gzip would break every page that reads these.
 write_parquet_grouped <- function(df, path, by) {
   df <- as.data.frame(df)
+  # An empty season is valid (the old plain write handled it). Slicing 1:0
+  # below would throw, and the caller's tryCatch wraps the whole season loop,
+  # so one empty season would silently skip every later season's file.
+  if (nrow(df) == 0L) {
+    write_parquet(df, path, compression = "snappy")
+    return(invisible(0L))
+  }
   df <- df[do.call(order, c(unname(as.list(df[by])), na.last = TRUE)), , drop = FALSE]
   grp <- match(df[[by[1]]], unique(df[[by[1]]]))  # NA keys form their own group
   starts <- c(1L, which(diff(grp) != 0L) + 1L)
