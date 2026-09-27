@@ -392,6 +392,10 @@ game_logs <- game_raw |>
          # every match at an even chance with a home edge. Optional until a
          # torp release carries them.
          any_of(c("wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team")),
+         # net_points in the same three parts, uncentred (torp .np_raw_parts()):
+         # they add up to net_points, where epv_recv/disp/spoil are centred for
+         # the rating and add up to `epv`. Optional until a torp release has them.
+         any_of(c("np_own", "np_won", "np_team")),
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
   arrange(player_id, season, round)
