@@ -355,40 +355,87 @@ for (season in seasons) {
     stop("Season ", season, ": frame check failed (", round(100 * mean(fc_ok), 2), "% agree)")
   }
 
-  # Running score after each row. Goals and behinds have their own rows, but
-  # a rushed behind usually does not (Grand Final 2026: 24 Behind rows for 29
-  # behinds scored). Every behind is followed by a kick-in, though, so a
-  # kick-in whose previous row is not a Behind is counted as a rushed behind
-  # to the side NOT kicking in. That reproduces the API's final score in 209
-  # of 218 matches in 2026 (4 of 218 counting scoring rows alone); the other
-  # 9 are each exactly one behind short -- a rushed behind at a siren, which
-  # has no kick-in after it and so leaves no trace in the feed. The official
-  # final score is carried as home_final / away_final for headlines.
+  # Chain-boundary repeats: the feed lists the event at every chain boundary
+  # twice, as the last row of one chain and the first row of the next (same
+  # action, player, team and second). About 23,000 rows a season (5.5%). Kept,
+  # so the rows still join 1:1 to the pbp, but flagged so a replay or a count
+  # can skip the copy.
   data.table::setorder(ev, match_id, display_order)
-  ev[, .prev := data.table::shift(description), by = match_id]
-  ev[, .rushed := grepl("^Kickin", description) & (is.na(.prev) | .prev != "Behind")]
-  ev[, .scorer := data.table::fcase(
-    description %in% c("Goal", "Behind"), team_id,
-    .rushed, data.table::fifelse(team_id == home_team_id, away_team_id, home_team_id),
-    default = NA_character_)]
-  ev[, .pts := data.table::fcase(description == "Goal", 6L,
-                                 description == "Behind" | .rushed, 1L, default = 0L)]
-  ev[, `:=`(home_score = cumsum(data.table::fifelse(!is.na(.scorer) & .scorer == home_team_id, .pts, 0L)),
-            away_score = cumsum(data.table::fifelse(!is.na(.scorer) & .scorer == away_team_id, .pts, 0L))),
+  same <- function(a, b) (is.na(a) & is.na(b)) | (!is.na(a) & !is.na(b) & a == b)
+  ev[, repeat_of_prev := chain_number != data.table::shift(chain_number) &
+       same(description, data.table::shift(description)) & period == data.table::shift(period) &
+       same(period_seconds, data.table::shift(period_seconds)) &
+       same(team_id, data.table::shift(team_id)) & same(player_id, data.table::shift(player_id)),
      by = match_id]
+  ev[is.na(repeat_of_prev), repeat_of_prev := FALSE]
+
+  # Running score, from the AFL API's own list of every scoring event
+  # (torp::load_score_events(), score_events-data release). The chains feed
+  # cannot give it: most rushed behinds have no row, a chain that ended in one
+  # can be labelled outOfBounds, and a kick in flight at the siren leaves
+  # nothing (rebuilt from the chains it matched the final in 1,275 of 1,279
+  # matches, 2021-2026). Each event is attached to one row: the Goal / Behind /
+  # Rushed row of that type within 5 seconds if there is one, otherwise the
+  # last row at or before its time in that quarter. home_score / away_score
+  # are the API's running score after that row.
+  se <- data.table::as.data.table(load_score_events(season))
+  if (nrow(se) == 0) stop("no score events for ", season, " (torpdata score_events-data release)")
+  se <- se[, .(match_id, period = as.integer(period_number), t = as.integer(period_seconds),
+               score_type, score_team_id = team_id, score_player_id = player_score_player_player_id,
+               agg_home = as.integer(aggregate_home_score), agg_away = as.integer(aggregate_away_score),
+               event_number = as.integer(event_number))]
+  se[, row_desc := data.table::fcase(score_type == "GOAL", "Goal", score_type == "BEHIND", "Behind",
+                                     score_type == "RUSHED_BEHIND", "Rushed", default = NA_character_)]
+  rows <- ev[, .(match_id, period, t = period_seconds, display_order, description)]
+  # 1. a scoring row of the same type, nearest in time (within 5 s)
+  typed <- rows[description %in% c("Goal", "Behind", "Rushed")]
+  data.table::setnames(typed, "description", "row_desc")
+  typed[, t_row := t]
+  data.table::setkey(typed, match_id, period, row_desc, t)
+  hit <- typed[se, on = .(match_id, period, row_desc, t), roll = "nearest", mult = "first",
+               .(event_number = i.event_number, match_id, display_order, gap = abs(t_row - i.t))]
+  se[hit, on = .(match_id, event_number), `:=`(at_order = data.table::fifelse(i.gap <= 5, i.display_order, NA_integer_))]
+  # 2. otherwise the last row at or before the event in that quarter
+  data.table::setkey(rows, match_id, period, t, display_order)
+  prior <- rows[se[is.na(at_order)], on = .(match_id, period, t), roll = Inf, mult = "last",
+                .(event_number = i.event_number, match_id, display_order)]
+  se[prior, on = .(match_id, event_number), at_order := data.table::fifelse(is.na(at_order), i.display_order, at_order)]
+
+  unplaced <- se[is.na(at_order)]
+  no_rows <- setdiff(unique(se$match_id), unique(ev$match_id))
+  unplaced <- unplaced[!match_id %in% no_rows]
+  cat("Score events placed on a row:", nrow(se) - nrow(unplaced) - se[match_id %in% no_rows, .N], "of",
+      se[!match_id %in% no_rows, .N], "\n")
+  if (length(no_rows)) {
+    message("::warning::chain-events-", season, ": ", length(no_rows), " match(es) have scores but no chain rows: ",
+            paste(no_rows, collapse = ", "))
+  }
+  if (nrow(unplaced) > 0) {
+    # A cut-off chains feed (the quarter has no rows) leaves its later scores
+    # unplaced; that match's running score then stops where its rows stop.
+    message("::warning::chain-events-", season, ": ", nrow(unplaced), " score event(s) had no row to sit on, in ",
+            data.table::uniqueN(unplaced$match_id), " match(es): ", paste(head(unique(unplaced$match_id), 5), collapse = ", "))
+  }
+
+  # One row can carry more than one score (rare); it keeps the last.
+  placed <- se[!is.na(at_order)][order(match_id, event_number)]
+  placed <- placed[, .SD[.N], by = .(match_id, display_order = at_order)]
+  ev[placed, on = .(match_id, display_order), `:=`(
+    score_type = i.score_type, score_team_id = i.score_team_id, score_player_id = i.score_player_id,
+    home_score = i.agg_home, away_score = i.agg_away)]
+  ev[, `:=`(home_score = data.table::nafill(home_score, "locf"), away_score = data.table::nafill(away_score, "locf")), by = match_id]
+  ev[is.na(home_score), `:=`(home_score = 0L, away_score = 0L)]
+
+  # Every match whose scores all found a row must end on its official score.
   fin <- ev[, .(h = data.table::last(home_score), a = data.table::last(away_score),
                 oh = data.table::last(home_team_score_total_score),
                 oa = data.table::last(away_team_score_total_score)), by = match_id]
-  off <- fin[!is.na(oh) & (h != oh | a != oa)]
-  cat("Running score matches the API final score in", nrow(fin) - nrow(off), "of", nrow(fin), "matches\n")
+  fin <- fin[!match_id %in% unplaced$match_id & !is.na(oh)]
+  off <- fin[h != oh | a != oa]
+  cat("Running score ends on the official final score in", nrow(fin) - nrow(off), "of", nrow(fin), "matches\n")
   if (nrow(off) > 0) {
-    message("::warning::chain-events-", season, ": running score differs from the final score in ",
-            nrow(off), " match(es) (expected: a few, from siren rushed behinds): ",
-            paste(head(off$match_id, 5), collapse = ", "))
-  }
-  # Far more than the siren cases means the scoring rule itself has broken.
-  if (nrow(fin) >= 20 && nrow(off) / nrow(fin) > 0.15) {
-    stop("Season ", season, ": running score is wrong in ", nrow(off), " of ", nrow(fin), " matches")
+    stop("Season ", season, ": running score does not end on the final score in ", nrow(off), " match(es): ",
+         paste(head(off$match_id, 5), collapse = ", "))
   }
 
   nm <- function(g, s) data.table::fifelse(is.na(g) & is.na(s), NA_character_,
@@ -401,6 +448,7 @@ for (season in seasons) {
     period = as.integer(period),
     period_seconds = as.integer(period_seconds),
     chain_number = as.integer(chain_number),
+    repeat_of_prev,
     frame_team_id = chain_team_id,
     description,
     team_id,
@@ -430,6 +478,9 @@ for (season in seasons) {
     contest_defender_id,
     contest_defender_team_id,
     contest_outcome,
+    score_type,
+    score_team_id,
+    score_player_id,
     home_score,
     away_score,
     home_final = as.integer(home_team_score_total_score),
