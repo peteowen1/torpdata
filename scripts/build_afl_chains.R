@@ -52,6 +52,12 @@ if (is.null(torp_path)) {
 }
 suppressMessages(devtools::load_all(torp_path, quiet = TRUE))
 source("scripts/parquet_helpers.R")  # write_parquet_grouped()
+# chain-events needs load_score_events() (torp 78fa65b3). Checked here, not
+# inside the per-season tryCatch, so a torp checkout that is too old stops
+# the build instead of quietly writing no chain-events files.
+if (!exists("load_score_events", mode = "function")) {
+  stop("torp is too old for chain-events: load_score_events() not found (needs torp 78fa65b3 or later)")
+}
 cat("Loaded torp package from:", torp_path, "\n")
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -417,8 +423,16 @@ for (season in seasons) {
             data.table::uniqueN(unplaced$match_id), " match(es): ", paste(head(unique(unplaced$match_id), 5), collapse = ", "))
   }
 
-  # One row can carry more than one score (rare); it keeps the last.
+  # Scores must sit on rows in the order they happened. A misplaced score
+  # breaks this even in a match the final-score check below has to skip
+  # (one with unplaced scores), so it is checked on every match.
   placed <- se[!is.na(at_order)][order(match_id, event_number)]
+  disorder <- placed[, .(bad = any(diff(at_order) < 0)), by = match_id][bad == TRUE]
+  if (nrow(disorder) > 0) {
+    stop("Season ", season, ": scores placed out of order in ", nrow(disorder), " match(es): ",
+         paste(head(disorder$match_id, 5), collapse = ", "))
+  }
+  # One row can carry more than one score (rare); it keeps the last.
   placed <- placed[, .SD[.N], by = .(match_id, display_order = at_order)]
   ev[placed, on = .(match_id, display_order), `:=`(
     score_type = i.score_type, score_team_id = i.score_team_id, score_player_id = i.score_player_id,
