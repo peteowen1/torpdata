@@ -91,7 +91,9 @@ PBP_COLS <- c(
   "contest_target_id", "contest_target_team_id",
   "contest_defender_id", "contest_defender_team_id", "contest_outcome",
   # chain-events only: expected score before the action, and whose it is
-  # (torp add_epv_vars(): exp_pts is in team_id_mdl's frame, torp#217)
+  # (torp add_epv_vars(): exp_pts is in team_id_mdl's frame, torp#217).
+  # Verified 2026-09-27 present in every season 2021 through 2026 (a full
+  # `Rscript build_afl_chains.R 2021 ... 2026` run loaded both).
   "exp_pts", "team_id_mdl"
 )
 
@@ -303,8 +305,13 @@ for (season in seasons) {
   # exp_pts is the expected score BEFORE the action, for ep_team_id (the team
   # in possession: on a stoppage that is the side that wins it, which is not
   # always frame_team_id). After the action is exp_pts + delta_ep.
+  # Until chain-events has readers, a failure here warns (loudly, as a CI
+  # annotation) and moves on: chains-{season} above is already written and is
+  # what five blog pages read. Make this a hard failure when chain-events
+  # replaces chains-{season}.
+  tryCatch({
   raw <- data.table::as.data.table(load_chains(season, rounds = TRUE))
-  if (nrow(raw) == 0) stop("Season ", season, ": load_chains() returned no rows")
+  if (nrow(raw) == 0) stop("load_chains() returned no rows")
   raw[, `:=`(display_order = as.integer(display_order), round_number = as.integer(round_number))]
   if (anyDuplicated(raw, by = c("match_id", "display_order"))) {
     stop("Season ", season, ": raw chains have duplicate (match_id, display_order) keys")
@@ -323,7 +330,11 @@ for (season in seasons) {
                    contest_target_id, contest_target_team_id, contest_defender_id,
                    contest_defender_team_id, contest_outcome,
                    .pbp_x = x, .pbp_team = team_id, .pbp_desc = description)]
+  if (anyDuplicated(model, by = c("match_id", "display_order"))) {
+    stop("Season ", season, ": pbp has duplicate (match_id, display_order) keys")
+  }
   ev <- merge(raw, model, by = c("match_id", "display_order"), all.x = TRUE, sort = FALSE)
+  if (nrow(ev) != nrow(raw)) stop("Season ", season, ": join changed the row count (", nrow(raw), " -> ", nrow(ev), ")")
   n_joined <- sum(!is.na(ev$.pbp_desc))
   if (n_joined != nrow(pbp)) {
     stop("Season ", season, ": only ", n_joined, " of ", nrow(pbp),
@@ -340,7 +351,7 @@ for (season in seasons) {
   fc <- ev[!is.na(.pbp_x) & !is.na(.pbp_team) & !is.na(team_id) & .pbp_team == team_id]
   fc_ok <- fc[, abs(data.table::fifelse(team_id == chain_team_id, x, -x) - .pbp_x) <= 1]
   cat("Frame check: raw x in chain_team_id's frame on", sum(fc_ok), "of", length(fc_ok), "rows\n")
-  if (mean(fc_ok) < 0.999) {
+  if (length(fc_ok) == 0 || mean(fc_ok) < 0.999) {
     stop("Season ", season, ": frame check failed (", round(100 * mean(fc_ok), 2), "% agree)")
   }
 
@@ -439,6 +450,9 @@ for (season in seasons) {
   cat("Wrote", ev_file, ":", nrow(events), "rows (", nrow(pbp), "used by the EPV model ),",
       n_rg, "row groups (",
       round(file.info(ev_file)$size / 1024^2, 2), "MB )\n")
+  }, error = function(e) {
+    message("::error::chain-events-", season, " NOT written: ", conditionMessage(e))
+  })
 }
 
 cat("\nDone.\n")
