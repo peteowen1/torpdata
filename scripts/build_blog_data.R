@@ -432,7 +432,15 @@ game_logs <- game_raw |>
          any_of(c("np_own", "np_won", "np_team")),
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
-  arrange(player_id, season, round)
+  arrange(player_id, season, round) |>
+  # Full-precision doubles cost ~0.55 MB each in this file (the 1-dp epv
+  # columns cost ~0.07 MB), which took game-logs from 3.1 to 5.8 MB once the
+  # ledger columns landed. 4 dp: 3.1 MB, team net_points still within 0.0005
+  # of the real margin, and the site shows at most 2 dp. 3 dp drifted to 0.005
+  # and let parts-vs-EPV differ by 0.02 on screen (measured 2026-09-27).
+  mutate(across(any_of(c("net_points", "np_own", "np_won", "np_team",
+                         "wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team",
+                         "psv", "osv", "dsv")), ~ round(.x, 4)))
 if (!"net_points" %in% names(game_logs)) {
   message("game-logs: no net_points column upstream (pre-torp#203 parquet?) -- ",
           "match-page EPV will keep reading the centred/adjusted epv until a ",
