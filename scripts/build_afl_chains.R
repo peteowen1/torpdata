@@ -365,10 +365,14 @@ for (season in seasons) {
   # chain-events publishes the play-by-play's sign, so y > 0 is the top of
   # the ground as documented above. Missed once: the first chain-events
   # checked x only, and the blog drew the Grand Final winner on the wrong
-  # side. On a row whose actor is the frame team, -raw y must equal pbp y.
-  fy <- fc[team_id == chain_team_id & !is.na(.pbp_y)]
-  fy_ok <- fy[, abs(-y - .pbp_y) <= 1]
-  cat("y check: -raw y equals the play-by-play's y on", sum(fy_ok), "of", length(fy_ok), "rows\n")
+  # side. Checked on every actor row, mirrored like x: the play-by-play is in
+  # the actor's frame, which for an opponent's action is the frame rotated
+  # 180 degrees, so both axes flip. Actor = frame team: pbp y = -raw y;
+  # opponent actor: pbp y = raw y.
+  fy <- fc[!is.na(.pbp_y)]
+  fy_ok <- fy[, abs(data.table::fifelse(team_id == chain_team_id, -y, y) - .pbp_y) <= 1]
+  cat("y check: raw y, sign-corrected and mirrored like x, equals the play-by-play's y on",
+      sum(fy_ok), "of", length(fy_ok), "rows\n")
   if (length(fy_ok) == 0 || mean(fy_ok) < 0.999) {
     stop("Season ", season, ": y sign check failed (", round(100 * mean(fy_ok), 2), "% agree)")
   }
