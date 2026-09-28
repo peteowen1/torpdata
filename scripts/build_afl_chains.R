@@ -486,15 +486,20 @@ for (season in seasons) {
   # A chain's net points from the chain team's side is the sum of its rows'
   # np_value, sign-flipped for the away side. NA, never 0, where the ledger
   # values nothing (spoils, contest targets, scoring rows...).
+  pbp_full <- NULL; pstats <- NULL; np_pay <- NULL
   np_rows <- tryCatch({
     pbp_full <- data.table::as.data.table(load_pbp(season, rounds = TRUE))
     pstats <- data.table::as.data.table(load_player_stats(season))
     eng <- .np_engine_frame(pbp_full, pstats, raw, NULL)
     tp <- data.table::as.data.table(attr(eng, "np_team_margin_payments"))
     pr <- data.table::as.data.table(attr(eng, "np_team_margin_pool_rows"))
+    # For the per-quarter split below: named payments and pool shares per row.
+    np_pay <- data.table::rbindlist(list(
+      tp[, .(match_id = as.character(match_id), display_order = as.integer(display_order), team, player_id = as.character(player_id), amount = paid)],
+      pr[, .(match_id = as.character(match_id), display_order = as.integer(display_order), team, player_id = NA_character_, amount = pool)]
+    ))
     if (!nrow(tp) || !nrow(pr)) stop("the engine returned no team-margin payment tables")
     ha <- unique(pbp_full[, .(match_id = as.character(match_id), team, home_away)])
-    rm(pbp_full); gc(verbose = FALSE)
     rv <- data.table::rbindlist(list(
       tp[, .(v = sum(paid)), by = .(match_id = as.character(match_id), display_order = as.integer(display_order), team)],
       pr[, .(v = sum(pool)), by = .(match_id = as.character(match_id), display_order = as.integer(display_order), team)]
@@ -600,6 +605,68 @@ for (season in seasons) {
   cat("Wrote", ev_file, ":", nrow(events), "rows (", nrow(pbp), "used by the EPV model ),",
       n_rg, "row groups (",
       round(file.info(ev_file)$size / 1024^2, 2), "MB )\n")
+
+  # ==== player-quarters-{season}.parquet =====================================
+  # Each player's EPV (net points) and WPA (even 50/50 start) per quarter, from
+  # the same ledgers as the full-game numbers, so the match page's quarter
+  # view shows the same quantities as its full-game view. Per quarter: the
+  # player's named payments on that quarter's rows, plus his pool share -- his
+  # published total minus all his named payments -- spread over the quarters
+  # in proportion to his team's pool in each. The quarters add up to the
+  # published net_points / wpa_neutral exactly (checked); a team's quarter
+  # totals follow its quarter by quarter play.
+  tryCatch({
+    if (is.null(np_pay) || is.null(pbp_full)) stop("the net points engine did not run for this season")
+    per <- unique(ev[, .(match_id, display_order, period = as.integer(period))])
+    pub <- data.table::as.data.table(load_player_game_ratings(season))[
+      , .(match_id = as.character(match_id), player_id = as.character(player_id), team, round_number = as.integer(round),
+          net_points = as.numeric(net_points), wpa_neutral = as.numeric(wpa_neutral))]
+    split_q <- function(pay, total_col, label) {
+      pay <- merge(pay, per, by = c("match_id", "display_order"))
+      named <- pay[!is.na(player_id), .(named = sum(amount)), by = .(match_id, player_id, period)]
+      pool <- pay[is.na(player_id), .(pool = sum(amount)), by = .(match_id, team, period)]
+      pool[, ptot := sum(pool), by = .(match_id, team)]
+      pool[, nq := .N, by = .(match_id, team)]
+      pool[, frac := data.table::fifelse(abs(ptot) > 1e-9, pool / ptot, 1 / nq)]
+      tot <- pub[!is.na(get(total_col)), .(match_id, player_id, team, total = get(total_col))]
+      # The ledger's team names are the play-by-play's; the published file's
+      # must match them or pool shares would land nowhere.
+      miss_t <- setdiff(unique(tot$team), unique(pool$team))
+      if (length(miss_t)) stop(label, ": published team names not in the ledger: ", paste(head(miss_t, 3), collapse = ", "))
+      nsum <- named[, .(nsum = sum(named)), by = .(match_id, player_id)]
+      tot <- merge(tot, nsum, by = c("match_id", "player_id"), all.x = TRUE)
+      tot[is.na(nsum), nsum := 0]
+      tot[, share := total - nsum]
+      q <- merge(tot[, .(match_id, player_id, team, total, share)], pool[, .(match_id, team, period, frac)],
+                 by = c("match_id", "team"), allow.cartesian = TRUE)
+      q <- merge(q, named, by = c("match_id", "player_id", "period"), all.x = TRUE)
+      q[is.na(named), named := 0]
+      q[, value := named + share * frac]
+      chk <- q[, .(s = sum(value), total = total[1]), by = .(match_id, player_id)]
+      gap <- max(abs(chk$s - chk$total))
+      if (!is.finite(gap) || gap > 1e-6) stop(label, ": quarters do not add up to the published total (max gap ", signif(gap, 3), ")")
+      lost <- nrow(tot) - data.table::uniqueN(chk, by = c("match_id", "player_id"))
+      if (lost > 0) stop(label, ": ", lost, " player-matches got no quarter rows")
+      q[, .(match_id, player_id, period, value)]
+    }
+    epv_q <- split_q(np_pay, "net_points", "EPV")
+    wl <- build_wpa_ledger(pbp_full, pstats, .wpa_neutral_pre_match(pbp_full$match_id))
+    wpa_q <- split_q(data.table::as.data.table(attr(wl, "row_payments")), "wpa_neutral", "WPA")
+    data.table::setnames(epv_q, "value", "epv"); data.table::setnames(wpa_q, "value", "wpa")
+    pq <- merge(epv_q, wpa_q, by = c("match_id", "player_id", "period"), all = TRUE)
+    pq <- merge(pq, unique(pub[, .(match_id, player_id, team, round_number)]), by = c("match_id", "player_id"), all.x = TRUE)
+    pq <- pq[, .(match_id, season = as.integer(season), round_number, player_id, team, period = as.integer(period),
+                 epv = round(epv, 4), wpa = round(wpa, 5))]
+    pq_file <- file.path("blog", paste0("player-quarters-", season, ".parquet"))
+    n_rg_q <- write_parquet_grouped(pq, pq_file, by = c("round_number", "match_id", "player_id", "period"))
+    cat("Wrote", pq_file, ":", nrow(pq), "rows,", data.table::uniqueN(pq, by = c("match_id", "player_id")),
+        "player-matches,", n_rg_q, "row groups (quarters add up to the published EPV and WPA)\n")
+  }, error = function(e) {
+    message("::error::player-quarters-", season, " NOT written: ", conditionMessage(e))
+  })
+  # The season's full play-by-play and the engine inputs are only needed up
+  # to here; free them before the next season loads its own.
+  rm(pbp_full, pstats, np_pay); gc(verbose = FALSE)
   }, error = function(e) {
     message("::error::chain-events-", season, " NOT written: ", conditionMessage(e))
   })
