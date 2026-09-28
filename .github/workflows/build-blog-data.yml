@@ -300,7 +300,7 @@ jobs:
 
           # Optional — warn but don't fail
           YEAR=$(date +%Y)
-          for f in simulations.parquet team-strength.parquet shots.parquet game-stats.parquet player-skills.parquet player-skills-history.parquet player-finishing.parquet matchup-table.parquet "chains-${YEAR}.parquet" "chain-events-${YEAR}.parquet" "player-quarters-${YEAR}.parquet"; do
+          for f in simulations.parquet team-strength.parquet shots.parquet game-stats.parquet player-skills.parquet player-skills-history.parquet player-finishing.parquet matchup-table.parquet "chain-events-${YEAR}.parquet" "player-quarters-${YEAR}.parquet"; do
             if [ ! -f "blog/$f" ]; then
               echo "::warning::Optional output blog/$f was not produced"
             fi

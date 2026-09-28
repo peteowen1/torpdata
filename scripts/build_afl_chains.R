@@ -1,25 +1,14 @@
 #!/usr/bin/env Rscript
-# Build afl/chains-{season}.parquet — per-row chain/PBP data enriched with
-# per-row WP and WPA-credit-split columns, for the blog's AFL Match Stats
-# Value tab per-quarter WPA toggle (docs/plans/AFL_CHAIN_PARQUET_PLAN.md,
-# Stage 2). Stage 1 (torp PR #114) shipped attach_per_row_wpa_split(), whose
-# per-row wpa_disp/wpa_recv reproduce create_wp_credit() exactly.
+# Build afl/chain-events-{season}.parquet (every event in the chain feed, one
+# coordinate frame, EP, the API's running score, per-row net points) and
+# afl/player-quarters-{season}.parquet (each player's EPV and WPA per quarter).
 #
-# IMPORTANT — this file already exists in production and is read by TWO live
-# blog features that predate this plan: afl/match-chains.qmd (the chain
-# visualizer — reads x/y/disposal/team names for the pass diagram) and the
-# Pass Map section of afl/match.qmd (same x/y/disposal/team-name columns).
-# Those features are NOT in the plan's target column table (which explicitly
-# excludes x/y "the chain viz already gets these from the worker live-chains
-# endpoint if needed" — that assumption doesn't hold; verified 2026-07-21 by
-# grepping both .qmd files, which fetch x/y directly from THIS file). So this
-# script emits the plan's target columns PLUS the extra columns those two
-# pages already depend on (x, y, disposal, initial_state, home_team_id,
-# home_team, away_team) — dropping them would silently break both pages.
-# The old "Chain data from PBP" block in build_blog_data.R (which used to be
-# the sole writer of this file, with a narrower ad-hoc column set and no
-# WP/WPA-split columns) is removed in the same commit as this script, so
-# there is exactly one writer of blog/chains-{season}.parquet.
+# chains-{season}.parquet, the play-by-play-only file this script used to
+# write, was retired 2026-09-28: its blog readers moved to chain-events through
+# window.fetchAflChainRows (data-loader.js), which returns the same rows in the
+# same actor frame. The copies already on R2 are left in place (the
+# all-australian-topv-squad blog post still reads chains-2026) and are no
+# longer updated.
 #
 # BACKFILL GOTCHA — check before adding any NEW column to PBP_COLS below.
 # load_pbp()'s column selection uses dplyr::any_of(), which SILENTLY DROPS a
@@ -28,16 +17,9 @@
 # season with "object not found" rather than degrading. So a column is only safe
 # to add here once every pbp_data_{season}_all.parquet in the release has it --
 # which means after the historical rebuild that regenerated them, not merely
-# after the torp code that computes it. Verified 2026-09-04 for coord_team_id /
-# coord_home_team_id / the five contest_* columns: all present in 2021 through
+# after the torp code that computes it. Verified 2026-09-04 for the five
+# contest_* columns: all present in 2021 through
 # 2026, so `Rscript build_afl_chains.R 2021 ... 2025` works today.
-#
-# SECOND OUTPUT, chain-events-{season}.parquet (added 2026-09-27): every event
-# in torp's raw chains, not only the rows the EPV model keeps. It replaces this
-# file once its readers have moved over (afl/match-chains, afl/match pass map,
-# afl/player heatmap, afl/team pass network, afl/topv-leaderboard, and the
-# all-australian-topv-squad blog post); then the chains-{season} write below is
-# deleted. Do not add columns to chains-{season} in the meantime.
 #
 # Usage:
 #   Rscript scripts/build_afl_chains.R            # current season only
@@ -66,10 +48,8 @@ cat("Building chain parquet(s) for season(s):", paste(seasons, collapse = ", "),
 
 dir.create("blog", showWarnings = FALSE)
 
-# Columns read from load_pbp() — the plan's target columns, plus utc_start_time
-# and team (only needed transiently for the create_wp_credit() verification
-# check below, not written to the output parquet), plus the extra columns
-# match-chains.qmd / match.qmd's pass map still depend on (see header note).
+# Columns read from load_pbp(). utc_start_time and team are only needed for the
+# create_wp_credit() identity check below.
 PBP_COLS <- c(
   "match_id", "season", "round_number", "display_order", "period", "period_seconds",
   "chain_number", "description", "shot_at_goal", "final_state", "initial_state",
@@ -77,14 +57,6 @@ PBP_COLS <- c(
   "wp", "wpa", "delta_epv", "x", "y", "disposal",
   "home_team_id", "home_team_name", "away_team_name",
   "team", "utc_start_time",
-  # torpdata#85: the chain-level possessing team. NOT the frame of (x, y) in
-  # chains-{season}: the play-by-play's x, y are in each row's ACTOR's frame
-  # (team_id), measured 2026-09-27 -- read in coord_team_id's frame, the
-  # implied kick lengths come out median 24.7 m with 14.1% over 80 m, against
-  # 21.2 m and 2.9% in the actor's frame. Team-less rows (centre bounce,
-  # ball-up, out of bounds) copy the NEXT actor's frame. chain-events-{season}
-  # below has one frame per row instead (frame_team_id).
-  "coord_team_id", "coord_home_team_id",
   # torpdata#82: aerial-contest detail. The Spoil / Contest Target ROWS are
   # dropped upstream by EPV_RELEVANT_DESCRIPTIONS (clean_features.R) before
   # this script ever runs, but add_contest_vars_dt() (clean_pbp.R) deliberately
@@ -101,24 +73,6 @@ PBP_COLS <- c(
   # Verified 2026-09-27 present in every season 2021 through 2026 (a full
   # `Rscript build_afl_chains.R 2021 ... 2026` run loaded both).
   "exp_pts", "team_id_mdl"
-)
-
-# Final output column order — plan's target table first, then the extras
-# kept for match-chains.qmd / match.qmd pass-map compatibility (see header).
-OUTPUT_COLS <- c(
-  "match_id", "season", "round_number", "display_order", "period", "period_seconds",
-  "chain_number", "description", "shot_at_goal", "final_state",
-  "team_id", "player_id", "player_name", "lead_player_id", "pos_team",
-  "wp", "wpa", "wpa_disp", "wpa_recv", "delta_ep", "player_credit",
-  # extras (existing chain-viz / pass-map consumers)
-  "x", "y", "disposal", "initial_state", "home_team_id", "home_team", "away_team",
-  # torpdata#85: coordinate-frame team, so the blog can orient (x, y) without
-  # a per-page heuristic
-  "coord_team_id", "coord_home_team_id",
-  # torpdata#82: aerial-contest detail, so the contest boards are computable
-  # client-side (populated on contest Kick rows only -- ~1.7% of rows)
-  "contest_target_id", "contest_target_team_id",
-  "contest_defender_id", "contest_defender_team_id", "contest_outcome"
 )
 
 for (season in seasons) {
@@ -245,54 +199,10 @@ for (season in seasons) {
   }
   cat("Quarter-sum identity check PASSED\n")
 
-  # ---- Project to output schema -------------------------------------------
-  out <- pbp[, .(
-    match_id,
-    season = as.integer(season),
-    round_number = as.integer(round_number),
-    display_order = as.integer(display_order),
-    period = as.integer(period),
-    period_seconds = as.integer(period_seconds),
-    chain_number = as.integer(chain_number),
-    description,
-    shot_at_goal = !is.na(shot_at_goal) & shot_at_goal == TRUE,
-    final_state,
-    team_id,
-    player_id,
-    player_name,
-    lead_player_id,
-    pos_team,
-    wp = round(wp, 4),
-    wpa = round(wpa, 4),
-    wpa_disp = round(wpa_disp, 4),
-    wpa_recv = round(wpa_recv, 4),
-    delta_ep = round(delta_ep, 4),
-    player_credit = round(player_credit, 4),
-    x = round(x, 1),
-    y = round(y, 1),
-    disposal,
-    initial_state,
-    home_team_id,
-    home_team = home_team_name,
-    away_team = away_team_name,
-    coord_team_id,
-    coord_home_team_id,
-    contest_target_id,
-    contest_target_team_id,
-    contest_defender_id,
-    contest_defender_team_id,
-    contest_outcome
-  )]
-  data.table::setcolorder(out, OUTPUT_COLS)
-
-  out_file <- file.path("blog", paste0("chains-", season, ".parquet"))
-  arrow::write_parquet(as.data.frame(out), out_file)
-  cat("Wrote", out_file, ":", nrow(out), "rows,", n_matches, "matches (",
-      round(file.info(out_file)$size / 1024^2, 2), "MB )\n")
-
   # ==== chain-events-{season}.parquet ========================================
   # Every event in the raw chains feed: the play-by-play above keeps only the
-  # rows the EPV model uses (2026: 363,145 of 447,945), dropping Goal / Behind
+  # rows the EPV model uses (2026: 363,145 of 447,945; the blog's fetchAflChainRows keeps just those
+  # rows, delta_ep set, where it wants the play-by-play view), dropping Goal / Behind
   # / Rushed rows, spoils, contest targets, Kick Into F50 and the rest. The two
   # join 1:1 on (match_id, display_order).
   #
@@ -304,17 +214,16 @@ for (season in seasons) {
   # known moment: Logan Morris's winning goal in the 2026 Grand Final was
   # kicked from the top side). The ground is venue_length x venue_width
   # metres. (chains-{season} is different: each row there is in its ACTOR's
-  # frame, team_id, which is why team-less rows in it have no frame at all.)
+  # frame, team_id; fetchAflChainRows in the blog rebuilds that view.)
   #
   # Model columns (exp_pts, delta_ep, wp, wpa, credits) are joined from the
   # play-by-play and are NA -- never 0 -- on rows the model does not use.
   # exp_pts is the expected score BEFORE the action, for ep_team_id (the team
   # in possession: on a stoppage that is the side that wins it, which is not
   # always frame_team_id). After the action is exp_pts + delta_ep.
-  # Until chain-events has readers, a failure here warns (loudly, as a CI
-  # annotation) and moves on: chains-{season} above is already written and is
-  # what five blog pages read. Make this a hard failure when chain-events
-  # replaces chains-{season}.
+  # A failure here is a CI error annotation, not a stopped build: the upload
+  # step comes after this script, so stopping would also hold back ratings,
+  # game logs and every other file. R2 keeps the last good chain-events.
   tryCatch({
   raw <- data.table::as.data.table(load_chains(season, rounds = TRUE))
   if (nrow(raw) == 0) stop("load_chains() returned no rows")
