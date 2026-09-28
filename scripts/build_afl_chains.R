@@ -470,7 +470,12 @@ for (season in seasons) {
 
   # Net points per row, from the home side (np_value): what torp's net points
   # ledger puts on each row, from the production engine call
-  # (.np_engine_frame, as create_player_game_data() makes it). Its team-margin
+  # (.np_engine_frame, as create_player_game_data() makes it) run on this one
+  # season. Production runs it on every season at once, which fits the
+  # difficulty and contest models walk-forward rather than in-sample; measured
+  # on 2026 (review, 2026-09-28) the per-player totals this gives match the
+  # published net_points to within 0.08 points (median 0, 10,022
+  # player-matches), so the chains and the players table agree. Its team-margin
   # step books each row to both sides, equal and opposite, as named payments
   # plus a pool share (np_team_margin_payments / _pool_rows); np_value is the
   # home side's. A match's rows add up to the margin the play-by-play records;
