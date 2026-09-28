@@ -335,7 +335,7 @@ for (season in seasons) {
                    player_credit, lead_player_id, pos_team,
                    contest_target_id, contest_target_team_id, contest_defender_id,
                    contest_defender_team_id, contest_outcome,
-                   .pbp_x = x, .pbp_team = team_id, .pbp_desc = description)]
+                   .pbp_x = x, .pbp_y = y, .pbp_team = team_id, .pbp_desc = description)]
   if (anyDuplicated(model, by = c("match_id", "display_order"))) {
     stop("Season ", season, ": pbp has duplicate (match_id, display_order) keys")
   }
@@ -359,6 +359,18 @@ for (season in seasons) {
   cat("Frame check: raw x in chain_team_id's frame on", sum(fc_ok), "of", length(fc_ok), "rows\n")
   if (length(fc_ok) == 0 || mean(fc_ok) < 0.999) {
     stop("Season ", season, ": frame check failed (", round(100 * mean(fc_ok), 2), "% agree)")
+  }
+  # y sign: the raw feed's y is the NEGATIVE of the play-by-play's (torp
+  # flips it when cleaning; 1,265 of 1,265 Grand Final rows, 2026-09-28).
+  # chain-events publishes the play-by-play's sign, so y > 0 is the top of
+  # the ground as documented above. Missed once: the first chain-events
+  # checked x only, and the blog drew the Grand Final winner on the wrong
+  # side. On a row whose actor is the frame team, -raw y must equal pbp y.
+  fy <- fc[team_id == chain_team_id & !is.na(.pbp_y)]
+  fy_ok <- fy[, abs(-y - .pbp_y) <= 1]
+  cat("y check: -raw y equals the play-by-play's y on", sum(fy_ok), "of", length(fy_ok), "rows\n")
+  if (length(fy_ok) == 0 || mean(fy_ok) < 0.999) {
+    stop("Season ", season, ": y sign check failed (", round(100 * mean(fy_ok), 2), "% agree)")
   }
 
   # Chain-boundary repeats: the feed lists the event at every chain boundary
@@ -476,7 +488,9 @@ for (season in seasons) {
     shot_at_goal = !is.na(shot_at_goal) & shot_at_goal == TRUE,
     behind_info,
     x = as.integer(x),
-    y = as.integer(y),
+    # The play-by-play's sign (see the y check): y > 0 is the top of the
+    # ground with frame_team_id attacking to the right.
+    y = -as.integer(y),
     initial_state,
     final_state,
     ep_team_id,
