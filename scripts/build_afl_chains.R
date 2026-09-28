@@ -468,6 +468,66 @@ for (season in seasons) {
          paste(head(off$match_id, 5), collapse = ", "))
   }
 
+  # Net points per row, from the home side (np_value): what torp's net points
+  # ledger puts on each row, from the production engine call
+  # (.np_engine_frame, as create_player_game_data() makes it). Its team-margin
+  # step books each row to both sides, equal and opposite, as named payments
+  # plus a pool share (np_team_margin_payments / _pool_rows); np_value is the
+  # home side's. A match's rows add up to the margin the play-by-play records;
+  # the reconciliation to the official margin (scores the play-by-play has no
+  # row for, up to three goals) is booked at match level by the ledger, so it
+  # is carried as np_unplaced_home on every row of the match. Then, exactly:
+  #   sum(np_value) + np_unplaced_home == official home margin.
+  # A chain's net points from the chain team's side is the sum of its rows'
+  # np_value, sign-flipped for the away side. NA, never 0, where the ledger
+  # values nothing (spoils, contest targets, scoring rows...).
+  np_rows <- tryCatch({
+    pbp_full <- data.table::as.data.table(load_pbp(season, rounds = TRUE))
+    pstats <- data.table::as.data.table(load_player_stats(season))
+    eng <- .np_engine_frame(pbp_full, pstats, raw, NULL)
+    tp <- data.table::as.data.table(attr(eng, "np_team_margin_payments"))
+    pr <- data.table::as.data.table(attr(eng, "np_team_margin_pool_rows"))
+    if (!nrow(tp) || !nrow(pr)) stop("the engine returned no team-margin payment tables")
+    ha <- unique(pbp_full[, .(match_id = as.character(match_id), team, home_away)])
+    rm(pbp_full); gc(verbose = FALSE)
+    rv <- data.table::rbindlist(list(
+      tp[, .(v = sum(paid)), by = .(match_id = as.character(match_id), display_order = as.integer(display_order), team)],
+      pr[, .(v = sum(pool)), by = .(match_id = as.character(match_id), display_order = as.integer(display_order), team)]
+    ))[, .(v = sum(v)), by = .(match_id, display_order, team)]
+    rv <- merge(rv, ha, by = c("match_id", "team"), all.x = TRUE)
+    if (anyNA(rv$home_away)) stop(sum(is.na(rv$home_away)), " ledger rows have a team the play-by-play does not name")
+    # Both sides are booked equal and opposite; check it, then keep the home side.
+    pair <- rv[, .(s = sum(v)), by = .(match_id, display_order)]
+    if (nrow(pair[abs(s) > 1e-6])) stop(nrow(pair[abs(s) > 1e-6]), " ledger rows are not equal and opposite across the two sides")
+    rv[home_away == "Home", .(match_id, display_order, np_value = v)]
+  }, error = function(e) {
+    message("::warning::chain-events-", season, ": net points per row not built (", conditionMessage(e), ") -- np_value will be NA")
+    NULL
+  })
+  if (!is.null(np_rows)) {
+    ev[np_rows, on = .(match_id, display_order), np_value := i.np_value]
+    fin_np <- ev[, .(rows = sum(np_value, na.rm = TRUE),
+                     m = data.table::last(home_team_score_total_score) - data.table::last(away_team_score_total_score)), by = match_id]
+    fin_np[, np_unplaced_home := m - rows]
+    ev[fin_np, on = "match_id", np_unplaced_home := i.np_unplaced_home]
+    q <- stats::quantile(abs(fin_np$np_unplaced_home), c(.5, .9, 1), na.rm = TRUE)
+    cat("Net points per row: rows valued", ev[!is.na(np_value), .N], "| matches with nothing unplaced:",
+        fin_np[abs(np_unplaced_home) < 0.01, .N], "of", nrow(fin_np), "| unplaced (points) median / 90% / max:",
+        paste(round(q, 2), collapse = " / "), "\n")
+    # Far more than a few scores unplaced means rows went missing, not scores.
+    # The limit is five goals: 2021-2026 run to 19 points at most (three goals
+    # and a behind, CD_M20210142208) --
+    # except in a match whose chains feed is cut off (its later scores had no
+    # row to sit on, warned above), where that is expected.
+    chk_np <- fin_np[!match_id %in% unplaced$match_id]
+    if (isTRUE(max(abs(chk_np$np_unplaced_home), na.rm = TRUE) > 30)) {
+      stop("Season ", season, ": net points left off the rows exceed five goals in a match (",
+           chk_np[which.max(abs(np_unplaced_home)), match_id], ")")
+    }
+  } else {
+    ev[, `:=`(np_value = NA_real_, np_unplaced_home = NA_real_)]
+  }
+
   nm <- function(g, s) data.table::fifelse(is.na(g) & is.na(s), NA_character_,
                                            trimws(paste(data.table::fcoalesce(g, ""), data.table::fcoalesce(s, ""))))
   events <- ev[, .(
@@ -500,6 +560,8 @@ for (season in seasons) {
     ep_team_id,
     exp_pts = round(exp_pts, 4),
     delta_ep = round(delta_ep, 4),
+    np_value = round(np_value, 4),
+    np_unplaced_home = round(np_unplaced_home, 4),
     wp = round(wp, 4),
     wpa = round(wpa, 4),
     wpa_disp = round(wpa_disp, 4),
