@@ -664,6 +664,9 @@ for (season in seasons) {
   }, error = function(e) {
     message("::error::player-quarters-", season, " NOT written: ", conditionMessage(e))
   })
+  # The season's full play-by-play and the engine inputs are only needed up
+  # to here; free them before the next season loads its own.
+  rm(pbp_full, pstats, np_pay); gc(verbose = FALSE)
   }, error = function(e) {
     message("::error::chain-events-", season, " NOT written: ", conditionMessage(e))
   })
