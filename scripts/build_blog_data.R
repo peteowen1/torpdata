@@ -862,8 +862,31 @@ if (nrow(preds) == 0)        stop("preds is empty — no predictions loaded")
 if (nrow(details) == 0)      stop("details is empty — player_details produced no rows")
 if (nrow(game_logs) == 0)    stop("game_logs is empty — player_game_ratings produced no rows")
 
+# ratings-latest.parquet (torpdata#92): one row per player_id, the latest
+# (season, round), ALONGSIDE the full per-round file, which age-curves and the
+# round picker on player-ratings still need. The AFL ladder, team page, home
+# page and live sim read all ~137k rows of ratings.parquet only to keep ~1,350
+# with the blog's deduplicateLatest (data-loader.js); this is that result,
+# precomputed. It copies deduplicateLatest exactly: missing season/round count
+# as 0, a tie keeps the EARLIER row in file order (ratings is arranged by
+# desc(torp)), and players come out in order of first appearance. Checked on
+# 2026-10-02's file: 1,350 rows, identical values and order to the blog's
+# dedupe, 116 KB against 8.7 MB.
+ratings_latest <- ratings |>
+  mutate(.row = row_number(),
+         .s = coalesce(as.numeric(season), 0), .r = coalesce(as.numeric(round), 0)) |>
+  group_by(player_id) |>
+  mutate(.first = min(.row)) |>
+  arrange(desc(.s), desc(.r), .row, .by_group = TRUE) |>
+  slice(1) |>
+  ungroup() |>
+  arrange(.first) |>
+  select(-.row, -.s, -.r, -.first)
+if (nrow(ratings_latest) != n_distinct(ratings$player_id)) stop("ratings_latest has ", nrow(ratings_latest), " rows for ", n_distinct(ratings$player_id), " players")
+
 dir.create("blog", showWarnings = FALSE)
 write_parquet(ratings, "blog/ratings.parquet")
+write_parquet(ratings_latest, "blog/ratings-latest.parquet")
 write_parquet(latest_teams, "blog/team-ratings.parquet")
 write_parquet(preds, "blog/predictions.parquet")
 write_parquet(details, "blog/player-details.parquet")
