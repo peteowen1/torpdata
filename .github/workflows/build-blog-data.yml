@@ -291,7 +291,7 @@ jobs:
           ls -la blog/*.parquet 2>/dev/null || true
 
           # Required — fail the build if missing
-          for f in ratings.parquet ratings-latest.parquet team-ratings.parquet predictions.parquet player-details.parquet game-logs.parquet; do
+          for f in ratings.parquet ratings-latest.parquet ratings-season-latest.parquet team-ratings.parquet predictions.parquet player-details.parquet game-logs.parquet; do
             if [ ! -f "blog/$f" ]; then
               echo "::error::Required output blog/$f was not produced"
               exit 1

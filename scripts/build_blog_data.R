@@ -884,9 +884,30 @@ ratings_latest <- ratings |>
   select(-.row, -.s, -.r, -.first)
 if (nrow(ratings_latest) != n_distinct(ratings$player_id)) stop("ratings_latest has ", nrow(ratings_latest), " rows for ", n_distinct(ratings$player_id), " players")
 
+# ratings-season-latest.parquet: one row per (player_id, season, team), that
+# combination's latest round. The blog's AFL team page builds its roster (and
+# from it the shot map's player list) by filtering ratings.parquet to one club
+# and season and keeping each player's highest round, so it read all ~137k rows
+# for a few dozen (~3 s warm). This is that result for every club and season.
+# Same rule as the page: ties keep the EARLIER row in file order (strict >), and
+# rows come out in order of first appearance. Checked on 2026-10-02's file:
+# 4,850 rows; all 108 club-season rosters identical to the page's own result
+# from the full file; 358 KB against 8.7 MB.
+ratings_season_latest <- ratings |>
+  mutate(.row = row_number(), .r = coalesce(as.numeric(round), 0)) |>
+  group_by(player_id, season, team) |>
+  mutate(.first = min(.row)) |>
+  arrange(desc(.r), .row, .by_group = TRUE) |>
+  slice(1) |>
+  ungroup() |>
+  arrange(.first) |>
+  select(-.row, -.r, -.first)
+if (nrow(ratings_season_latest) != nrow(distinct(ratings, player_id, season, team))) stop("ratings_season_latest has ", nrow(ratings_season_latest), " rows for ", nrow(distinct(ratings, player_id, season, team)), " player-season-team keys")
+
 dir.create("blog", showWarnings = FALSE)
 write_parquet(ratings, "blog/ratings.parquet")
 write_parquet(ratings_latest, "blog/ratings-latest.parquet")
+write_parquet(ratings_season_latest, "blog/ratings-season-latest.parquet")
 write_parquet(latest_teams, "blog/team-ratings.parquet")
 write_parquet(preds, "blog/predictions.parquet")
 write_parquet(details, "blog/player-details.parquet")
