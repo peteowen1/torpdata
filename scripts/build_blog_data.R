@@ -1084,6 +1084,15 @@ if (torp_loaded) {
   write_parquet(as.data.frame(sim_output), "blog/simulations.parquet")
   cat("simulations:", nrow(sim_output), "teams\n")
 
+  # Per-round history (torpdata#106): keep every round's rows instead of overwriting.
+  tryCatch({
+    sim_hist <- update_sim_history(sim_output)
+    write_parquet(sim_hist, "blog/simulations-history.parquet", compression = "snappy")
+    cat("simulations-history:", nrow(sim_hist), "rows\n")
+  }, error = function(e) {
+    message("::warning::simulations-history failed, skipping: ", conditionMessage(e))
+  })
+
   # --- Team strength — small residual/BT reference table for the browser sim ---
   # Mirrors the World Cup's wc2026_team_strength.parquet (pannaverse/panna
   # data-raw/match-predictions-opta/12_export_wc2026_blog.R). The blog's
