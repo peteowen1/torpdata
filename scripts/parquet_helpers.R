@@ -55,8 +55,23 @@ update_sim_history <- function(new, as_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%
                                r2_base = "https://pub-ee4bf5b599a047f9ac2b9facc1587008.r2.dev/afl",
                                seed_paths = character()) {
   key <- c("season", "round", "team")
-  read_try <- function(p) tryCatch(as.data.frame(arrow::read_parquet(p)),
-                                   error = function(e) { message("INFO: no ", p, ": ", conditionMessage(e)); NULL })
+  # NULL only for a genuine 404 ("nothing there yet"). Every other failure
+  # (timeout, 5xx, DNS, truncated file) is re-thrown: treating it as "no history"
+  # would seed a one-round file and overwrite the real history on R2.
+  read_try <- function(p) {
+    tmp <- tempfile(fileext = ".parquet"); on.exit(unlink(tmp))
+    warn <- character()
+    rc <- tryCatch(
+      withCallingHandlers(utils::download.file(p, tmp, mode = "wb", quiet = TRUE),
+                          warning = function(w) { warn <<- c(warn, conditionMessage(w)); invokeRestart("muffleWarning") }),
+      error = function(e) { warn <<- c(warn, conditionMessage(e)); 1L })
+    if (!identical(as.integer(rc), 0L)) {
+      if (any(grepl("404", warn, fixed = TRUE))) { message("INFO: 404 for ", p); return(NULL) }
+      stop("could not read ", p, ": ", paste(warn, collapse = "; "))
+    }
+    as.data.frame(arrow::read_parquet(tmp))
+  }
+  read_seed <- function(p) if (file.exists(p)) as.data.frame(arrow::read_parquet(p)) else read_try(p)
   new <- as.data.frame(new)
   new$as_at <- as_at
   hist <- read_try(file.path(r2_base, "simulations-history.parquet"))
@@ -66,7 +81,7 @@ update_sim_history <- function(new, as_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%
   }
   seeds <- c(list(hist),
              if (is.null(hist)) list(read_try(file.path(r2_base, "simulations.parquet"))),
-             lapply(seed_paths, read_try))
+             lapply(seed_paths, read_seed))
   seeds <- Filter(function(x) !is.null(x) && nrow(x) > 0L, seeds)
   seeds <- lapply(seeds, function(x) { if (!"as_at" %in% names(x)) x$as_at <- NA_character_; x })
   all <- dplyr::bind_rows(c(seeds, list(new)))   # later rows win below; new is last
@@ -80,6 +95,11 @@ update_sim_history <- function(new, as_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%
   stopifnot(nrow(cur) == nrow(new))
   for (col in c("premiers_pct", "runner_up_pct", "top_1_pct", "n_sims", "as_at"))
     if (!col %in% names(all) || all(is.na(cur[[col]]))) stop("history column empty for current round: ", col)
+  # Never publish a smaller history than the one we read: every old round must survive
+  if (!is.null(hist)) {
+    kept <- paste(all$season, all$round); old <- unique(paste(hist$season, hist$round))
+    if (nrow(all) < nrow(hist) || !all(old %in% kept)) stop("history would shrink: ", nrow(hist), " -> ", nrow(all), " rows")
+  }
   rr <- as.data.frame(table(all$season, all$round)); rr <- rr[rr$Freq > 0, ]
   message("history: ", nrow(all), " rows x ", ncol(all), " cols; ", nrow(rr), " season-rounds; seasons ",
           paste(range(all$season), collapse = "-"), "; rounds ", paste(range(all$round), collapse = "-"),
