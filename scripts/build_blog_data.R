@@ -905,13 +905,19 @@ ratings_season_latest <- ratings |>
 if (nrow(ratings_season_latest) != nrow(distinct(ratings, player_id, season, team))) stop("ratings_season_latest has ", nrow(ratings_season_latest), " rows for ", nrow(distinct(ratings, player_id, season, team)), " player-season-team keys")
 
 dir.create("blog", showWarnings = FALSE)
-write_parquet(ratings, "blog/ratings.parquet")
+# Sorted by player in ~5,000-row groups: /afl/player and /afl/compare filter
+# ratings on player_id (parquet_helpers.R write_parquet_sorted).
+write_parquet_sorted(ratings, "blog/ratings.parquet", by = c("player_id", "season", "round"))
 write_parquet(ratings_latest, "blog/ratings-latest.parquet")
 write_parquet(ratings_season_latest, "blog/ratings-season-latest.parquet")
 write_parquet(latest_teams, "blog/team-ratings.parquet")
 write_parquet(preds, "blog/predictions.parquet")
 write_parquet(details, "blog/player-details.parquet")
-write_parquet(game_logs, "blog/game-logs.parquet")
+# Sorted by season, round, match in ~8,000-row groups: match pages filter
+# game-logs on match_id, which then reads one group (~0.3 MB) instead of the
+# file (4.2 MB). Smaller groups compress worse: 4,000 rows made the file 34%
+# bigger for every whole-file reader, 8,000 rows 21% (measured 2026-10-06).
+write_parquet_sorted(game_logs, "blog/game-logs.parquet", by = c("season", "round", "match_id"), rows = 8000L)
 cat("ratings:", nrow(ratings), "players\n")
 cat("team-ratings:", nrow(latest_teams), "teams\n")
 cat("predictions:", nrow(preds), "matches\n")

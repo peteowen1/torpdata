@@ -514,6 +514,16 @@ for (season in seasons) {
   cat("Wrote", ev_file, ":", nrow(events), "rows (", nrow(pbp), "used by the EPV model ),",
       n_rg, "row groups (",
       round(file.info(ev_file)$size / 1024^2, 2), "MB )\n")
+  # Same rows grouped by club, for /afl/team and /afl/player (parquet_helpers.R).
+  # Optional: a failure here must not cost the season's chain-events.
+  bt_file <- file.path("blog", paste0("chain-events-", season, "-by-team.parquet"))
+  tryCatch({
+    n_bt <- write_chain_events_by_team(events, bt_file)
+    cat("Wrote", bt_file, ":", n_bt, "club row groups (",
+        round(file.info(bt_file)$size / 1024^2, 2), "MB )\n")
+  }, error = function(e) {
+    message("::warning::", bt_file, " NOT written (pages fall back to chain-events): ", conditionMessage(e))
+  })
 
   # ==== player-quarters-{season}.parquet =====================================
   # Each player's EPV (net points) and WPA (even 50/50 start) per quarter, from
