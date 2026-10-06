@@ -247,6 +247,8 @@ jobs:
             else
               mv "blog/player_skills_${YEAR}.parquet" "blog/player-skills.parquet"
               echo "Downloaded player_skills_${YEAR}.parquet (${SIZE} bytes) → player-skills.parquet"
+              # Latest row per player, for /afl/player (scripts/build_skills_latest.R)
+              Rscript scripts/build_skills_latest.R || echo "::warning::player-skills-latest.parquet not built; /afl/player falls back to player-skills.parquet"
             fi
           else
             echo "::warning::player_skills_${YEAR}.parquet not available — skills data won't update"

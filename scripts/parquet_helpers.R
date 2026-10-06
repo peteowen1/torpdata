@@ -42,6 +42,47 @@ write_parquet_grouped <- function(df, path, by) {
   invisible(n_rg)
 }
 
+# Write a parquet sorted by `by`, in row groups of `rows` rows, so the blog's
+# fetchParquet filter can skip every group whose min/max statistics on by[1]
+# exclude the values it wants (blog data-loader.js _rowGroupRanges). For files
+# a page filters on one key but whose groups would be too small one-per-value:
+# ratings.parquet sorted by player_id puts a player's <=170 rows in one or two
+# of ~28 groups, where one row group made /afl/player download all 8.9 MB to
+# keep 170 rows (blog page speed registry, 2026-10-06). Sorting is by byte
+# order (method = "radix"), the order parquet statistics compare in, so a
+# locale cannot interleave keys across groups.
+write_parquet_sorted <- function(df, path, by, rows = 5000L) {
+  df <- as.data.frame(df)
+  if (nrow(df) > 0L) df <- df[do.call(order, c(unname(as.list(df[by])), method = "radix")), , drop = FALSE]
+  rownames(df) <- NULL
+  write_parquet(df, path, compression = "snappy", chunk_size = rows)
+  invisible(arrow::ParquetFileReader$create(path)$num_row_groups)
+}
+
+# chain-events-{season}-by-team.parquet: one row group per club, holding every
+# row of every match that club played (both teams' rows: the team page's pass
+# network needs the opponent's to tell a combination from a turnover), with
+# `for_team` = the club's name as chain-events spells it (home_team/away_team).
+# Each match appears twice, so the file is about twice chain-events' size, but
+# /afl/team and /afl/player read one club's group (~1/9 of the season) by
+# filtering for_team, instead of all 447,945 rows (~25 s on 2026-10-06).
+# Match pages keep reading chain-events-{season} (one row group per round).
+write_chain_events_by_team <- function(events, path) {
+  ev <- data.table::as.data.table(events)
+  teams <- sort(unique(c(ev$home_team, ev$away_team)), method = "radix")
+  parts <- lapply(teams, function(t) {
+    x <- ev[home_team == t | away_team == t]
+    x[, for_team := t]
+    x
+  })
+  out <- data.table::rbindlist(parts)
+  data.table::setcolorder(out, c("for_team", setdiff(names(out), "for_team")))
+  n_rg <- write_parquet_grouped(out, path, by = c("for_team", "round_number", "match_id", "display_order"))
+  if (n_rg != length(teams)) stop(sprintf("%s: %d row groups for %d clubs", path, n_rg, length(teams)))
+  if (nrow(out) != 2L * nrow(ev)) stop(sprintf("%s: %d rows, expected 2 x %d (each match under both clubs)", path, nrow(out), nrow(ev)))
+  invisible(n_rg)
+}
+
 # Per-round history of the season simulation (torpdata#106). simulations.parquet
 # is overwritten every run, so this file keeps every round's rows: key =
 # season + round + team, every column the simulation returns (premiers_pct,
