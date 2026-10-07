@@ -93,6 +93,11 @@ write_parquet_by_player <- function(df, path, by = c("player_id", "season", "rou
   sizes <- as.integer(tapply(run$lengths, grp, sum))
   ends <- cumsum(sizes); starts <- c(1L, head(ends, -1L) + 1L)
   tbl <- arrow::arrow_table(df)
+  # Drop R's attribute metadata (footer key "r"), as strip_parquet_r_metadata.R
+  # does. game-stats carried 8.7 MB of it on the 2026-10-07 build; the strip
+  # step then rewrote the file at a fixed group size, splitting 18 players
+  # across two groups. Browsers never read it.
+  tbl$metadata$r <- NULL
   sink <- arrow::FileOutputStream$create(path)
   props <- arrow::ParquetWriterProperties$create(names(df), compression = "snappy",
                                                  write_statistics = stats::setNames(names(df) == "player_id", names(df)))
