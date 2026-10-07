@@ -936,12 +936,12 @@ if (!is.null(game_stats)) {
 # to the original file, which is written above and left in its own order.
 by_player <- list(
   list(df = game_logs, path = "blog/game-logs-by-player.parquet", by = c("player_id", "season", "round", "match_id")),
-  list(df = game_stats, path = "blog/game-stats-by-player.parquet", by = c("player_id", "season", "round", "match_id")),
-  list(df = shots, path = "blog/shots-by-player.parquet", by = c("player_id", "season", "round_number", "match_id", "period", "period_seconds"))
+  list(df = game_stats, path = "blog/game-stats-by-player.parquet", by = c("player_id", "season", "round", "match_id"), rows = 3000L),
+  list(df = shots, path = "blog/shots-by-player.parquet", by = c("player_id", "season", "round_number", "match_id", "period", "period_seconds"), rows = 3000L)
 )
 for (bp in by_player) {
   if (is.null(bp$df)) next
-  tryCatch(write_parquet_by_player(bp$df, bp$path, by = bp$by),
+  tryCatch(write_parquet_by_player(bp$df, bp$path, by = bp$by, rows = if (is.null(bp$rows)) 1500L else bp$rows),
            error = function(e) {
              unlink(bp$path)
              message("::warning::", bp$path, " NOT written (the page falls back to the original): ", conditionMessage(e))
