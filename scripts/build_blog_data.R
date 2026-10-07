@@ -931,6 +931,22 @@ if (!is.null(game_stats)) {
   write_parquet(game_stats, "blog/game-stats.parquet")
   cat("game-stats:", nrow(game_stats), "game stat records\n")
 }
+# Per-player copies for /afl/player (torpdata#112; parquet_helpers.R
+# write_parquet_by_player). Optional: a failure warns and the page falls back
+# to the original file, which is written above and left in its own order.
+by_player <- list(
+  list(df = game_logs, path = "blog/game-logs-by-player.parquet", by = c("player_id", "season", "round", "match_id")),
+  list(df = game_stats, path = "blog/game-stats-by-player.parquet", by = c("player_id", "season", "round", "match_id")),
+  list(df = shots, path = "blog/shots-by-player.parquet", by = c("player_id", "season", "round_number", "match_id", "period", "period_seconds"))
+)
+for (bp in by_player) {
+  if (is.null(bp$df)) next
+  tryCatch(write_parquet_by_player(bp$df, bp$path, by = bp$by),
+           error = function(e) {
+             unlink(bp$path)
+             message("::warning::", bp$path, " NOT written (the page falls back to the original): ", conditionMessage(e))
+           })
+}
 
 # Fixtures history — venue/date/scores for all seasons (blog stats filters)
 fixtures_files <- list.files("source", pattern = "^fixtures_", full.names = TRUE)

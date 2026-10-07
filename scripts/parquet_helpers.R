@@ -59,6 +59,52 @@ write_parquet_sorted <- function(df, path, by, rows = 5000L) {
   invisible(arrow::ParquetFileReader$create(path)$num_row_groups)
 }
 
+# {game-logs,game-stats,shots}-by-player.parquet (torpdata#112): the same rows
+# and columns as the original, sorted by player_id then `by[-1]`, packed into
+# row groups of up to `rows` rows that never split a player (a player with more
+# than `rows` rows gets a group of their own). /afl/player filters on player_id
+# and so reads exactly one group, where the originals are laid out for
+# /afl/match (game-logs by season/round/match) or not at all, and the page read
+# all of game-logs (5.1 MB), game-stats (1.3 MB) and shots (0.9 MB) to keep
+# one player's rows. The originals are not re-sorted: match pages depend on
+# their order. Sorting is radix (byte order), as in write_parquet_sorted.
+# Returns the row-group count and logs rows per group for the build log.
+write_parquet_by_player <- function(df, path, by = c("player_id", "season", "round"), rows = 1500L) {
+  df <- as.data.frame(df)
+  if (!"player_id" %in% names(df) || by[1] != "player_id") stop(path, ": by-player file needs player_id as the first sort key")
+  if (anyNA(df$player_id)) stop(sprintf("%s: %d rows with NA player_id", path, sum(is.na(df$player_id))))
+  by <- intersect(by, names(df))
+  df <- df[do.call(order, c(unname(as.list(df[by])), method = "radix")), , drop = FALSE]
+  rownames(df) <- NULL
+  # Greedy packing of whole players: start a new group when adding the next
+  # player would take the current one past `rows`.
+  run <- rle(df$player_id)
+  grp <- integer(length(run$lengths)); g <- 1L; filled <- 0L
+  for (i in seq_along(run$lengths)) {
+    if (filled > 0L && filled + run$lengths[i] > rows) { g <- g + 1L; filled <- 0L }
+    grp[i] <- g; filled <- filled + run$lengths[i]
+  }
+  sizes <- as.integer(tapply(run$lengths, grp, sum))
+  ends <- cumsum(sizes); starts <- c(1L, head(ends, -1L) + 1L)
+  tbl <- arrow::arrow_table(df)
+  sink <- arrow::FileOutputStream$create(path)
+  props <- arrow::ParquetWriterProperties$create(names(df), compression = "snappy")
+  writer <- arrow::ParquetFileWriter$create(tbl$schema, sink, properties = props)
+  for (i in seq_along(starts)) {
+    writer$WriteTable(tbl[starts[i]:ends[i], ], chunk_size = sizes[i])
+  }
+  writer$Close()
+  sink$close()
+  rdr <- arrow::ParquetFileReader$create(path)
+  n_rg <- rdr$num_row_groups
+  if (n_rg != length(sizes)) stop(sprintf("%s: wrote %d row groups, expected %d", path, n_rg, length(sizes)))
+  if (rdr$num_rows != nrow(df)) stop(sprintf("%s: %d rows written, expected %d", path, rdr$num_rows, nrow(df)))
+  cat(sprintf("%s: %d rows, %d players, %d row groups (rows per group: min %d, median %d, max %d; largest player %d rows), %.2f MB\n",
+              path, nrow(df), length(run$lengths), n_rg, min(sizes), as.integer(stats::median(sizes)), max(sizes),
+              max(run$lengths), file.info(path)$size / 1024^2))
+  invisible(n_rg)
+}
+
 # chain-events-{season}-by-team.parquet: one row group per club, holding every
 # row of every match that club played (both teams' rows: the team page's pass
 # network needs the opponent's to tell a combination from a turnover), with
