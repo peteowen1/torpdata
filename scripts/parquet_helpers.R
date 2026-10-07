@@ -68,7 +68,13 @@ write_parquet_sorted <- function(df, path, by, rows = 5000L) {
 # all of game-logs (5.1 MB), game-stats (1.3 MB) and shots (0.9 MB) to keep
 # one player's rows. The originals are not re-sorted: match pages depend on
 # their order. Sorting is radix (byte order), as in write_parquet_sorted.
-# Returns the row-group count and logs rows per group for the build log.
+# Min/max statistics are written for player_id only: a browser downloads the
+# whole footer before any row, the footer grows with row groups x columns, and
+# no page filters these files on another column. That and `rows` were set by
+# measuring footer + one group (what a player read costs) on the live files,
+# 2026-10-07: game-logs 333 -> 269 KB (1,500 rows), game-stats 308 -> 178 KB
+# and shots 129 -> 87 KB (3,000 rows); bigger groups cost more than they save.
+# Returns the row-group count and logs rows per group and footer size.
 write_parquet_by_player <- function(df, path, by = c("player_id", "season", "round"), rows = 1500L) {
   df <- as.data.frame(df)
   if (!"player_id" %in% names(df) || by[1] != "player_id") stop(path, ": by-player file needs player_id as the first sort key")
@@ -88,7 +94,8 @@ write_parquet_by_player <- function(df, path, by = c("player_id", "season", "rou
   ends <- cumsum(sizes); starts <- c(1L, head(ends, -1L) + 1L)
   tbl <- arrow::arrow_table(df)
   sink <- arrow::FileOutputStream$create(path)
-  props <- arrow::ParquetWriterProperties$create(names(df), compression = "snappy")
+  props <- arrow::ParquetWriterProperties$create(names(df), compression = "snappy",
+                                                 write_statistics = stats::setNames(names(df) == "player_id", names(df)))
   writer <- arrow::ParquetFileWriter$create(tbl$schema, sink, properties = props)
   for (i in seq_along(starts)) {
     writer$WriteTable(tbl[starts[i]:ends[i], ], chunk_size = sizes[i])
@@ -99,9 +106,11 @@ write_parquet_by_player <- function(df, path, by = c("player_id", "season", "rou
   n_rg <- rdr$num_row_groups
   if (n_rg != length(sizes)) stop(sprintf("%s: wrote %d row groups, expected %d", path, n_rg, length(sizes)))
   if (rdr$num_rows != nrow(df)) stop(sprintf("%s: %d rows written, expected %d", path, rdr$num_rows, nrow(df)))
-  cat(sprintf("%s: %d rows, %d players, %d row groups (rows per group: min %d, median %d, max %d; largest player %d rows), %.2f MB\n",
+  con <- file(path, "rb"); seek(con, file.size(path) - 8L)
+  footer <- readBin(con, "integer", 1L, size = 4L, endian = "little"); close(con)
+  cat(sprintf("%s: %d rows, %d players, %d row groups (rows per group: min %d, median %d, max %d; largest player %d rows), footer %d KB, %.2f MB\n",
               path, nrow(df), length(run$lengths), n_rg, min(sizes), as.integer(stats::median(sizes)), max(sizes),
-              max(run$lengths), file.info(path)$size / 1024^2))
+              max(run$lengths), footer %/% 1024L, file.info(path)$size / 1024^2))
   invisible(n_rg)
 }
 
