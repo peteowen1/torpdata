@@ -267,6 +267,8 @@ jobs:
             else
               mv "blog/np_breakdown_${YEAR}.parquet" "blog/np-breakdown-${YEAR}.parquet"
               echo "Downloaded np_breakdown_${YEAR}.parquet (${SIZE} bytes) → np-breakdown-${YEAR}.parquet"
+              # Sorted by player_id in whole-player row groups, for /afl/player (scripts/sort_np_breakdown.R)
+              Rscript scripts/sort_np_breakdown.R "blog/np-breakdown-${YEAR}.parquet" || echo "::warning::np-breakdown-${YEAR}.parquet not re-sorted; /afl/player reads the whole file"
             fi
           else
             echo "::warning::np_breakdown_${YEAR}.parquet not available — the Net Points breakdown won't update"
