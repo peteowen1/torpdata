@@ -948,6 +948,22 @@ for (bp in by_player) {
            })
 }
 
+# Per-season copies for /afl/player-ratings (torpdata#119; parquet_helpers.R
+# write_parquet_by_season). Optional, like the by-player copies: a failure warns
+# and the page falls back to the original file.
+by_season <- list(
+  list(df = ratings, path = "blog/ratings-by-season.parquet", by = c("season", "round", "player_id")),
+  list(df = game_stats, path = "blog/game-stats-by-season.parquet", by = c("season", "round", "player_id"))
+)
+for (bs in by_season) {
+  if (is.null(bs$df)) next
+  tryCatch(write_parquet_by_season(bs$df, bs$path, by = bs$by),
+           error = function(e) {
+             unlink(bs$path)
+             message("::warning::", bs$path, " NOT written (the page falls back to the original): ", conditionMessage(e))
+           })
+}
+
 # Fixtures history — venue/date/scores for all seasons (blog stats filters)
 fixtures_files <- list.files("source", pattern = "^fixtures_", full.names = TRUE)
 if (length(fixtures_files) > 0) {
