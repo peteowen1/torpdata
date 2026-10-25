@@ -180,7 +180,7 @@ released via torpmodels' `stat-models` tag, not stored on torpdata.
 | Match Events | `match-events-YYYY.parquet` | Per-season EPV delta events (optional) |
 | Chain Data | `chains-YYYY.parquet` | Per-season chain actions (optional) |
 | Team Lineups | `teams-YYYY.parquet` | Per-season lineup data (optional) |
-| Simulations | `simulations.parquet` | 3000-sim Monte Carlo season projection (optional, requires torp) |
+| Simulations | `simulations.parquet` | 3000-sim Monte Carlo season projection (optional, requires torp). Once finals are being played, the finals columns (premiers, runner-up, ...) are read from the played results, not the pre-finals simulation: see `scripts/finals_lock.R`, `finals_games_locked` and `finals_sims_used` (torpdata#108) |
 | Injuries | `injuries.parquet` | Current injury list (optional) |
 | Player Skills | `player-skills.parquet` | Skill metrics (optional) |
 

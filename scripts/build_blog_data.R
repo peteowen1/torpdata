@@ -2,6 +2,7 @@ library(arrow)
 library(dplyr)
 
 source("scripts/parquet_helpers.R")  # write_parquet_grouped()
+source("scripts/finals_lock.R")      # finals_constraints(), lock_finals_probs() (torpdata#108)
 
 # Load torp package for team name normalization (AFL_TEAM_ALIASES + torp_replace_teams)
 # Wrapped in tryCatch — missing deps (ggplot2, httr, lubridate) shouldn't block the pipeline
@@ -409,6 +410,31 @@ game_files <- list.files("source", pattern = "^player_game_ratings_[0-9]{4}[.]pa
 if (length(game_files) == 0) stop("No player_game_ratings files found in source/")
 game_raw <- lapply(game_files, read_parquet) |> bind_rows()
 
+# Season parquets built before torp#263 carry np_own / np_won / np_team (team =
+# the whole pool). Map them to the new names exactly as torp's own no-breakdown
+# path does (np_disp = own acts, np_contest = won back, np_recv NA), so old and
+# new seasons line up and every row's parts still add up to net_points.
+if (all(c("np_own", "np_won") %in% names(game_raw))) {
+  for (col in c("np_disp", "np_recv", "np_contest")) {
+    if (!col %in% names(game_raw)) game_raw[[col]] <- NA_real_
+  }
+  old_row <- is.na(game_raw$np_disp) & !is.na(game_raw$np_own)
+  game_raw$np_disp[old_row]    <- game_raw$np_own[old_row]
+  game_raw$np_contest[old_row] <- game_raw$np_won[old_row]
+  message("game-logs: ", sum(old_row), " player-match rows mapped from pre-torp#263 ",
+          "np_own/np_won (np_recv NA on those rows)")
+  game_raw$np_own <- NULL
+  game_raw$np_won <- NULL
+}
+if (all(c("net_points", "np_disp", "np_contest", "np_team") %in% names(game_raw))) {
+  np_gap <- with(game_raw, abs(np_disp + dplyr::coalesce(np_recv, 0) + np_contest +
+                                 np_team - net_points))
+  if (any(np_gap > 1e-6, na.rm = TRUE)) {
+    stop("game-logs: net_points parts do not add up on ", sum(np_gap > 1e-6, na.rm = TRUE),
+         " rows (max gap ", signif(max(np_gap, na.rm = TRUE), 3), ")")
+  }
+}
+
 # A player cannot play the same match twice, so a duplicated player_id+match_id
 # means two sources of the same game were combined. Asserted here rather than
 # trusting the filename patterns above: on 2026-08-18 a candidate vintage
@@ -487,10 +513,15 @@ game_logs <- game_raw |>
          # Optional until a torp release carries them.
          any_of(c("wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team",
                   "wpa_neutral_own", "wpa_neutral_won", "wpa_neutral_team")),
-         # net_points in the same three parts, uncentred (torp .np_raw_parts()):
-         # they add up to net_points, where epv_recv/disp/spoil are centred for
-         # the rating and add up to `epv`. Optional until a torp release has them.
-         any_of(c("np_own", "np_won", "np_team")),
+         # net_points in four parts, uncentred (torp#263, .np_raw_parts()): each
+         # the sum of its play types in np-breakdown-<season> (disposals,
+         # receiving, contests and stoppages, team pool and anchor; the map is
+         # torp's .NP_PLAY_TYPE_FAMILY), so they add up to net_points, where
+         # epv_recv/disp/spoil are centred for the rating and add up to `epv`.
+         # Seasons with no breakdown carry np_recv NA and np_disp = all own
+         # acts. These replace np_own / np_won; np_team keeps its name, now the
+         # breakdown's team family. Optional until a torp release has them.
+         any_of(c("np_disp", "np_recv", "np_contest", "np_team")),
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
   arrange(player_id, season, round) |>
@@ -499,7 +530,7 @@ game_logs <- game_raw |>
   # ledger columns landed. 4 dp: 3.1 MB, team net_points still within 0.0005
   # of the real margin, and the site shows at most 2 dp. 3 dp drifted to 0.005
   # and let parts-vs-EPV differ by 0.02 on screen (measured 2026-09-27).
-  mutate(across(any_of(c("net_points", "np_own", "np_won", "np_team",
+  mutate(across(any_of(c("net_points", "np_disp", "np_recv", "np_contest", "np_team",
                          "wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team",
                          "wpa_neutral_own", "wpa_neutral_won", "wpa_neutral_team",
                          "psv", "osv", "dsv")), ~ round(.x, 4)))
@@ -1130,10 +1161,28 @@ if (torp_loaded) {
     cat("injuries:", nrow(injuries_blog), "players\n")
   }
 
-  cat("Running", 3000, "injury-aware season simulations for", current_season,
+  # Finals already played this season (torpdata#108). simulate_afl_season() only
+  # reads regular-season rounds and re-simulates the whole bracket, so the finals
+  # odds are rebuilt below from the played results. Part-played finals keep only
+  # the simulations that match them, so they get more simulations.
+  finals_games <- if ("game_type" %in% names(preds)) {
+    preds[preds$season == current_season & preds$game_type %in% "finals",
+          c("round", "home_team", "away_team", "actual_margin")]
+  } else {
+    NULL
+  }
+  finals_fc <- tryCatch(
+    if (!is.null(finals_games)) finals_constraints(finals_games),
+    error = function(e) {
+      message("::warning::Could not read played finals, finals not locked: ", conditionMessage(e))
+      NULL
+    })
+  n_sims_run <- finals_sim_count(finals_fc)
+
+  cat("Running", n_sims_run, "injury-aware season simulations for", current_season,
       "from round", latest_round, "...\n")
 
-    sim_results <- simulate_afl_season(current_season, n_sims = 3000,
+    sim_results <- simulate_afl_season(current_season, n_sims = n_sims_run,
                                      injuries = inj_df,
                                      seed = 42, verbose = FALSE)
   summary_dt <- summarise_simulations(sim_results)
@@ -1141,6 +1190,26 @@ if (torp_loaded) {
 
   # Finals stage probabilities from raw finals data
   finals <- sim_results$finals
+  finals_games_locked <- 0L
+  finals_sims_used <- as.integer(n_sims_val)
+  finals_locked <- NULL
+  if (!is.null(finals_fc) && finals_fc$n_played > 0L) {
+    finals_locked <- tryCatch({
+      fin <- data.table::copy(finals)
+      fin[, team := torp_replace_teams(team)]
+      lock_finals_probs(fin, finals_fc$constraints)
+    }, error = function(e) {
+      message("::warning::Played finals could not be locked, publishing the unlocked odds: ",
+              conditionMessage(e))
+      NULL
+    })
+  }
+  if (!is.null(finals_locked)) {
+    finals_games_locked <- as.integer(finals_fc$n_played)
+    finals_sims_used <- finals_locked$n_used
+    cat("finals locked:", finals_games_locked, "played games,", finals_locked$mode,
+        "-", finals_sims_used, "of", n_sims_val, "simulations used\n")
+  }
   finals_stage <- finals[, .(
     premiers_pct    = sum(finals_finish == 5) / n_sims_val,
     runner_up_pct   = sum(finals_finish == 4) / n_sims_val,
@@ -1166,6 +1235,7 @@ if (torp_loaded) {
   # Normalize sim team names → canonical full names (matching torp_ratings.parquet)
   summary_dt[, team := torp_replace_teams(team)]
   finals_stage[, team := torp_replace_teams(team)]
+  if (!is.null(finals_locked)) finals_stage <- finals_locked$stage  # already canonical names
   pos_dist[, team := torp_replace_teams(team)]
 
   # Current standings from internal AFL API (pre-season = zeros)
@@ -1209,6 +1279,11 @@ if (torp_loaded) {
   sim_output[, season := current_season]
   sim_output[, round := latest_round]
   sim_output[, n_sims := n_sims_val]
+  # How much of the finals odds is a played result (torpdata#108): finals games
+  # played, and the simulations they are read from (0 = Grand Final played, the
+  # odds are the result itself).
+  sim_output[, finals_games_locked := finals_games_locked]
+  sim_output[, finals_sims_used := finals_sims_used]
 
   write_parquet(as.data.frame(sim_output), "blog/simulations.parquet")
   cat("simulations:", nrow(sim_output), "teams\n")
@@ -1243,6 +1318,29 @@ if (torp_loaded) {
     strength_dt[, team := torp_replace_teams(team)]
     strength_dt <- strength_dt[, .(team, torp, residual_mean, residual_se)]
 
+    # Re-centre a fit whose reference team was pinned to 0. `fit` (glm or lm)
+    # holds one coefficient per non-reference team (`safe_names`, in the order
+    # of `other_teams`). The centred strength of team i is s_i - mean(s), with
+    # s_ref = 0, which is a fixed linear map C of those coefficients:
+    #   reference team  ->  -1/n on every coefficient
+    #   other team i    ->  1 on coefficient i, minus 1/n on every coefficient
+    # so its variance is C V C' with V = vcov(fit). Point estimates are
+    # identical to the old `c(0, est) - mean(c(0, est))`; the SEs now include
+    # the reference team (previously NA) and describe the centred strength.
+    .centre_pinned_fit <- function(fit, safe_names, other_teams, ref_team) {
+      co <- summary(fit)$coefficients
+      est <- co[safe_names, "Estimate"]
+      V <- stats::vcov(fit)[safe_names, safe_names, drop = FALSE]
+      n_all <- length(safe_names) + 1L
+      C <- rbind(matrix(-1 / n_all, nrow = 1L, ncol = length(safe_names)),
+                 diag(length(safe_names)) - 1 / n_all)
+      est_c <- drop(C %*% est)
+      se_c  <- sqrt(rowSums((C %*% V) * C))
+      nms <- c(ref_team, other_teams)
+      list(est = stats::setNames(est_c, nms), se = stats::setNames(se_c, nms),
+           home_adv = unname(co["home_adv", "Estimate"]))
+    }
+
     # --- bt_results: logistic/glm Bradley-Terry fit on THIS season's completed
     # games (win = 1, loss = 0, draw = 0.5 — AFL draws are rare, ~1 in 300
     # games; folding them in at 0.5 avoids discarding the odd one rather than
@@ -1251,10 +1349,12 @@ if (torp_loaded) {
     # against an arbitrary reference team (coefficient pinned to 0 pre-fit),
     # then re-centered to mean 0 post-fit for interpretability and side-by-side
     # comparability with bt_model (mirrors the mean-centering panna's
-    # fit_bt_ratings() does). bt_results_se is the glm standard error relative
-    # to the (pre-centering) reference team, reported as-is — a cheap
-    # approximation that doesn't correct for the recentering covariance, fine
-    # for a display-only column.
+    # fit_bt_ratings() does). bt_results_se is the standard error of each
+    # team's CENTRED strength, taken from the full coefficient covariance via
+    # .centre_pinned_fit() — so every team, the pinned reference team
+    # included, gets a finite SE. (It used to be the raw glm SE of a
+    # difference from the reference team, with NA for the reference team
+    # itself, which published NA for Adelaide; OPUS-redteam-2026-10-25 F6.)
     season_played <- preds[preds$season == current_season & !is.na(preds$actual_margin), ]
     bt_results_dt <- data.table::data.table(team = strength_dt$team,
                                             bt_results = NA_real_, bt_results_se = NA_real_)
@@ -1280,15 +1380,10 @@ if (torp_loaded) {
         glm_df$home_adv <- 1
         glm_df$y <- y
         bt_fit <- stats::glm(y ~ . - 1, data = glm_df, family = stats::binomial())
-        co <- summary(bt_fit)$coefficients
-        est <- co[safe_names, "Estimate"];   names(est) <- other_teams
-        se  <- co[safe_names, "Std. Error"]; names(se)  <- other_teams
-        full_est <- c(setNames(0, ref_team), est)
-        full_se  <- c(setNames(NA_real_, ref_team), se)
-        full_est <- full_est - mean(full_est)
-        bt_results_dt <- data.table::data.table(team = names(full_est),
-                                                bt_results = round(as.numeric(full_est), 4),
-                                                bt_results_se = round(as.numeric(full_se), 4))
+        bt_c <- .centre_pinned_fit(bt_fit, safe_names, other_teams, ref_team)
+        bt_results_dt <- data.table::data.table(team = names(bt_c$est),
+                                                bt_results = round(as.numeric(bt_c$est), 4),
+                                                bt_results_se = round(as.numeric(bt_c$se), 4))
       }
     }
     strength_dt <- merge(strength_dt, bt_results_dt, by = "team", all.x = TRUE)
@@ -1351,8 +1446,8 @@ if (torp_loaded) {
     # sum-to-zero contrast constraint baked into the design matrix — simpler
     # to code and identical result for the *point estimates* (recentering is
     # just a location shift); the standard errors are, as with bt_results,
-    # reported relative to the pre-recentering reference team as a cheap
-    # approximation.
+    # those of the centred strengths, from .centre_pinned_fit() (finite for
+    # the reference team too).
     .fit_margin_strength <- function(games_df, margin_col) {
       games_df <- games_df[!is.na(games_df[[margin_col]]), ]
       teams <- sort(unique(c(games_df$home_team, games_df$away_team)))
@@ -1372,17 +1467,12 @@ if (torp_loaded) {
       lm_df$home_adv <- 1
       lm_df$margin <- games_df[[margin_col]]
       fit <- stats::lm(margin ~ . - 1, data = lm_df)
-      co <- summary(fit)$coefficients
-      est <- co[safe_names, "Estimate"];   names(est) <- other_teams
-      se  <- co[safe_names, "Std. Error"]; names(se)  <- other_teams
-      full_est <- c(setNames(0, ref_team), est)
-      full_se  <- c(setNames(NA_real_, ref_team), se)
-      full_est <- full_est - mean(full_est)
+      cf <- .centre_pinned_fit(fit, safe_names, other_teams, ref_team)
       list(
-        strength = data.table::data.table(team = names(full_est),
-                                          strength    = round(as.numeric(full_est), 3),
-                                          strength_se = round(as.numeric(full_se), 3)),
-        home_adv = round(unname(co["home_adv", "Estimate"]), 3)
+        strength = data.table::data.table(team = names(cf$est),
+                                          strength    = round(as.numeric(cf$est), 3),
+                                          strength_se = round(as.numeric(cf$se), 3)),
+        home_adv = round(cf$home_adv, 3)
       )
     }
 

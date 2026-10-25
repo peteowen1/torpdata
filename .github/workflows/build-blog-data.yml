@@ -81,40 +81,69 @@ jobs:
 
           YEAR=$(date +%Y)
 
-          # Predictions (all available seasons)
-          if gh release download predictions -p "predictions_*.parquet" -D source; then
-            count=$(ls source/predictions_*.parquet 2>/dev/null | wc -l)
-            if [ "$count" -eq 0 ]; then
-              echo "::error::gh reported success but no predictions files found on disk"
-              exit 1
+          # Download every asset of a release named PREFIX*.parquet and check each
+          # one landed on disk (torpdata#118). `gh release download` can exit
+          # non-zero after some files are already written (a GitHub 500 on one
+          # asset, 2026-10-20), and the partial set silently published a
+          # predictions.parquet missing 216 of 1,056 matches. The expected list
+          # comes from the release itself, so it grows with the seasons.
+          #   $1 release tag, $2 file prefix (e.g. retrodictions_), $3 label
+          # Returns 0 all present, 2 release has no matching assets, 1 failure.
+          download_complete_set() {
+            local release="$1" prefix="$2" label="$3" attempt missing f expected
+            expected=$(gh release view "$release" --json assets \
+              --jq ".assets[].name | select(test(\"^${prefix}.*[.]parquet\$\"))") || {
+              echo "::error::Could not list assets of the ${release} release (needed to check the ${label} download is complete)"
+              return 1
+            }
+            if [ -z "$expected" ]; then
+              return 2
             fi
-            echo "Downloaded predictions: ${count} files"
-          else
-            echo "::error::Failed to download any predictions files"
+            for attempt in 1 2; do
+              gh release download "$release" -p "${prefix}*.parquet" -D source --clobber ||
+                echo "::warning::${label} download attempt ${attempt} failed"
+              missing=""
+              for f in $expected; do
+                [ -s "source/$f" ] || missing="$missing $f"
+              done
+              if [ -z "$missing" ]; then
+                echo "Downloaded ${label}: $(echo "$expected" | wc -l | tr -d ' ') files (every ${prefix}*.parquet asset on the ${release} release)"
+                return 0
+              fi
+              echo "::warning::${label} attempt ${attempt}: missing or empty:${missing}"
+            done
+            echo "::error::${label} download incomplete after 2 attempts; missing or empty:${missing}. Failing so the previous complete afl/predictions.parquet stays on R2 (torpdata#118)."
+            return 1
+          }
+
+          # Predictions (all available seasons)
+          rc=0; download_complete_set predictions predictions_ "predictions" || rc=$?
+          if [ "$rc" -eq 2 ]; then
+            echo "::error::The predictions release has no predictions_*.parquet assets"
+            exit 1
+          elif [ "$rc" -ne 0 ]; then
             exit 1
           fi
 
           # Honest backfill for pre-2026 seasons (regenerated round by round with
           # no future data; torpverse docs/plans/HONEST-BACKFILL-2021-2025.md).
           # The predictions_* pattern above does not match these names.
-          if gh release download predictions -p "backfill_predictions_*.parquet" -D source; then
-            count=$(ls source/backfill_predictions_*.parquet 2>/dev/null | wc -l)
-            if [ "$count" -eq 0 ]; then
-              echo "::error::gh reported success but no backfill_predictions files found on disk"
-              exit 1
-            fi
-            echo "Downloaded backfill predictions: ${count} files"
-          else
-            echo "::error::Failed to download backfill_predictions files"
+          rc=0; download_complete_set predictions backfill_predictions_ "backfill predictions" || rc=$?
+          if [ "$rc" -eq 2 ]; then
+            echo "::error::The predictions release has no backfill_predictions_*.parquet assets"
+            exit 1
+          elif [ "$rc" -ne 0 ]; then
             exit 1
           fi
 
-          # Retrodictions (backfill for rounds without locked predictions)
-          if gh release download retrodictions -p "retrodictions_*.parquet" -D source; then
-            count=$(ls source/retrodictions_*.parquet 2>/dev/null | wc -l)
-            echo "Downloaded retrodictions: ${count} files"
-          else
-            echo "::warning::No retrodictions available — only locked predictions will be used"
+          # Retrodictions (backfill for rounds without locked predictions).
+          # Only a release that genuinely has none is allowed to continue; a
+          # partial download fails the run.
+          rc=0; download_complete_set retrodictions retrodictions_ "retrodictions" || rc=$?
+          if [ "$rc" -eq 2 ]; then
+            echo "::warning::The retrodictions release has no retrodictions_*.parquet assets - only locked predictions will be used"
+          elif [ "$rc" -ne 0 ]; then
+            exit 1
           fi
 
           # Player details (latest year for bio data)
