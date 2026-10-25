@@ -94,6 +94,21 @@ jobs:
             exit 1
           fi
 
+          # Honest backfill for pre-2026 seasons (regenerated round by round with
+          # no future data; torpverse docs/plans/HONEST-BACKFILL-2021-2025.md).
+          # The predictions_* pattern above does not match these names.
+          if gh release download predictions -p "backfill_predictions_*.parquet" -D source; then
+            count=$(ls source/backfill_predictions_*.parquet 2>/dev/null | wc -l)
+            if [ "$count" -eq 0 ]; then
+              echo "::error::gh reported success but no backfill_predictions files found on disk"
+              exit 1
+            fi
+            echo "Downloaded backfill predictions: ${count} files"
+          else
+            echo "::error::Failed to download backfill_predictions files"
+            exit 1
+          fi
+
           # Retrodictions (backfill for rounds without locked predictions)
           if gh release download retrodictions -p "retrodictions_*.parquet" -D source; then
             count=$(ls source/retrodictions_*.parquet 2>/dev/null | wc -l)

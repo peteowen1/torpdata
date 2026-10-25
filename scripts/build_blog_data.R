@@ -19,6 +19,15 @@ if (!is.null(torp_path)) {
 } else {
   message("::warning::torp package not found — team name normalization unavailable")
 }
+# In CI torp is checked out on purpose, so failing to load it is a broken run,
+# not an optional degrade: without its team-name normalization, prediction
+# rows for the same game stop matching (full vs short names) and past games
+# publish twice, and simulations / team strength are skipped. Local runs keep
+# the warn-and-continue behaviour.
+if (!torp_loaded && identical(Sys.getenv("GITHUB_ACTIONS"), "true")) {
+  message("::error::torp failed to load in CI; refusing to publish blog data without team-name normalization")
+  stop("torp failed to load in CI; refusing to publish blog data without team-name normalization")
+}
 
 # Player ratings - predictive TORP ratings (career-weighted with exponential decay)
 all_ratings <- read_parquet("source/torp_ratings.parquet")
@@ -78,12 +87,26 @@ if (all(c("team_epr_spoil", "team_epr_hitout") %in% names(latest_teams))) {
 }
 
 # Match predictions - all seasons, handle both processed (2026+) and raw (2025) formats
-pred_files <- list.files("source", pattern = "^predictions_", full.names = TRUE)
+pred_files <- list.files("source", pattern = "^predictions_\\d+\\.parquet$", full.names = TRUE)
 if (length(pred_files) == 0) stop("No predictions files found in source/")
+# Honest backfill (torpverse docs/plans/HONEST-BACKFILL-2021-2025.md): seasons
+# before LIVE_LOCK_FIRST_SEASON regenerated round by round, each round's models
+# trained only on matches before it. Same flat format as the legacy files.
+backfill_files <- list.files("source", pattern = "^backfill_predictions_\\d+\\.parquet$",
+                             full.names = TRUE)
 
-preds_list <- lapply(pred_files, function(f) {
+read_pred_file <- function(f) {
   season <- as.integer(sub(".*predictions_(\\d+)\\.parquet$", "\\1", basename(f)))
   pred_raw <- read_parquet(f) |> ungroup()
+  # Match id, kept only to line honest rows up with old rows; dropped below.
+  match_key <- if ("match_id" %in% names(pred_raw)) {
+    as.character(pred_raw$match_id)
+  } else if ("providerId" %in% names(pred_raw)) {
+    as.character(pred_raw$providerId)
+  } else {
+    rep(NA_character_, nrow(pred_raw))
+  }
+  pred_raw$.match_id <- match_key
 
   if ("week" %in% names(pred_raw) && "pred_margin" %in% names(pred_raw)) {
     # Legacy format (2025): flat table with week, pred_margin, pred_xtotal
@@ -111,7 +134,8 @@ preds_list <- lapply(pred_files, function(f) {
         pred_total = round(pred_xtotal, 0),
         actual_margin = margin,
         start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
-        venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_
+        venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_,
+        .match_id = .match_id
       )
   } else if ("team_type" %in% names(pred_raw) && "pred_score_diff" %in% names(pred_raw)) {
     # Current format (2026+): pivoted table with team_type, pred_score_diff
@@ -129,29 +153,57 @@ preds_list <- lapply(pred_files, function(f) {
         pred_total = round(pred_tot_xscore, 0),
         actual_margin = score_diff,
         start_time = if ("start_time" %in% names(pred_raw)) start_time else NA_character_,
-        venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_
+        venue = if ("venue" %in% names(pred_raw)) as.character(venue) else NA_character_,
+        .match_id = .match_id
       )
   } else {
     warning("Unrecognized predictions format in ", basename(f),
             " — columns: ", paste(head(names(pred_raw), 10), collapse = ", "))
     NULL
   }
-})
+}
 # Only seasons from LIVE_LOCK_FIRST_SEASON on were locked live at kickoff.
 # The 2021-2025 predictions_<season> files were all written on 2026-04-12 by
 # running the predictions pipeline over finished seasons: its match models
 # train on every completed match (torp R/match_train.R, train_filter = NULL),
 # including the season being "predicted", and a first run for a season saves
-# every row as if frozen at kickoff. Those rows are hindsight, so they are
-# tagged "backfill" and must not be scored as a pre-game record
+# every row as if frozen at kickoff. Those rows are hindsight
 # (OPUS-redteam-2026-10-25 B1, torpverse/docs/reviews).
+#
+# For those seasons the honest backfill_predictions_<season> rows are used,
+# tagged "backfill". An old hindsight row is kept only for a game with no
+# honest row (all of 2021, and 2022 rounds 1-3, which had too little history
+# to fit), tagged "retrodiction" because it was made after the fact; the blog
+# ranks that label lowest and leaves it out of scoring.
 LIVE_LOCK_FIRST_SEASON <- 2026L
-preds <- bind_rows(preds_list) |>
-  mutate(
-    round = as.integer(round),
-    source = if_else(season >= LIVE_LOCK_FIRST_SEASON, "locked", "backfill")
-  ) |>
+old_preds <- bind_rows(lapply(pred_files, read_pred_file)) |>
+  mutate(round = as.integer(round),
+         source = if_else(season >= LIVE_LOCK_FIRST_SEASON, "locked", "retrodiction"),
+         .origin = "predictions")
+honest <- bind_rows(lapply(backfill_files, read_pred_file))
+if (nrow(honest) > 0) {
+  honest <- honest |>
+    filter(season < LIVE_LOCK_FIRST_SEASON) |>
+    mutate(round = as.integer(round), source = "backfill", .origin = "honest_backfill")
+  # Games are lined up by match id, not team names: the honest files use full
+  # names ("Adelaide Crows") and the old ones short names ("Adelaide").
+  if (anyNA(honest$.match_id) || anyDuplicated(honest$.match_id) > 0) {
+    stop("backfill_predictions files have missing or duplicate match ids")
+  }
+  old_same_seasons <- old_preds$season %in% unique(honest$season)
+  if (anyNA(old_preds$.match_id[old_same_seasons])) {
+    stop("Old predictions rows lack a match id in seasons that have honest backfill;",
+         " cannot tell which games the honest rows cover")
+  }
+  old_preds <- old_preds |> filter(!(.match_id %in% honest$.match_id))
+} else {
+  message("::warning::No backfill_predictions files in source/ -- every pre-",
+          LIVE_LOCK_FIRST_SEASON, " game uses old hindsight rows (tagged retrodiction)")
+}
+preds <- bind_rows(honest, old_preds) |>
   arrange(season, round, desc(abs(pred_margin)))
+# No game may carry both an honest row and an old row.
+stopifnot(!anyDuplicated(preds$.match_id[!is.na(preds$.match_id)]))
 cat("Predictions by source:",
     paste(names(table(preds$source)), table(preds$source), sep = "=", collapse = ", "), "\n")
 
@@ -190,7 +242,7 @@ if (length(retro_files) > 0) {
   # Only add retrodiction rows for season+round+home+away combos missing from predictions
   retro_new <- retro |>
     anti_join(preds, by = c("season", "round", "home_team", "away_team")) |>
-    mutate(source = "retrodiction")
+    mutate(source = "retrodiction", .origin = "retrodictions")
   if (nrow(retro_new) > 0) {
     preds <- bind_rows(preds, retro_new) |> arrange(season, round, desc(abs(pred_margin)))
     cat("Backfilled", nrow(retro_new), "matches from retrodictions\n")
@@ -209,12 +261,25 @@ if (torp_loaded) {
 # retrodiction twin. The blog's dedupePredictions() only prefers "locked", so
 # with two non-locked twins it would keep whichever sorts first. Drop the
 # retrodiction twin here, now that names agree.
+# Old hindsight rows from predictions_<season> (2021, 2022 R1-3) are also
+# tagged "retrodiction", so a game can have two retrodiction rows: keep the
+# predictions-pipeline one, which is what the site carried for those games
+# before the honest backfill existed, and drop the retrodictions-file twin.
 n_before <- nrow(preds)
 preds <- preds |>
   group_by(season, round, home_team, away_team) |>
   filter(source != "retrodiction" | all(source == "retrodiction")) |>
+  filter(.origin != "retrodictions" | all(.origin == "retrodictions")) |>
   ungroup()
-cat("Dropped", n_before - nrow(preds), "retrodiction rows that duplicate a locked or backfill row\n")
+cat("Dropped", n_before - nrow(preds), "retrodiction rows that duplicate another row for the same game\n")
+n_dup_games <- preds |> count(season, round, home_team, away_team) |> filter(n > 1) |> nrow()
+if (n_dup_games > 0) {
+  message("::warning::", n_dup_games, " games still have more than one predictions row")
+}
+pred_counts <- preds |> count(season, source, .origin)
+cat("Predictions by season and source:\n")
+print(as.data.frame(pred_counts), row.names = FALSE)
+preds <- preds |> select(-.match_id, -.origin)
 
 # ---------------------------------------------------------------------------
 # game_type lookup (issue #55): "regular" vs "finals" from the AFL API round name.
