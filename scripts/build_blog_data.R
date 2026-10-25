@@ -1243,6 +1243,29 @@ if (torp_loaded) {
     strength_dt[, team := torp_replace_teams(team)]
     strength_dt <- strength_dt[, .(team, torp, residual_mean, residual_se)]
 
+    # Re-centre a fit whose reference team was pinned to 0. `fit` (glm or lm)
+    # holds one coefficient per non-reference team (`safe_names`, in the order
+    # of `other_teams`). The centred strength of team i is s_i - mean(s), with
+    # s_ref = 0, which is a fixed linear map C of those coefficients:
+    #   reference team  ->  -1/n on every coefficient
+    #   other team i    ->  1 on coefficient i, minus 1/n on every coefficient
+    # so its variance is C V C' with V = vcov(fit). Point estimates are
+    # identical to the old `c(0, est) - mean(c(0, est))`; the SEs now include
+    # the reference team (previously NA) and describe the centred strength.
+    .centre_pinned_fit <- function(fit, safe_names, other_teams, ref_team) {
+      co <- summary(fit)$coefficients
+      est <- co[safe_names, "Estimate"]
+      V <- stats::vcov(fit)[safe_names, safe_names, drop = FALSE]
+      n_all <- length(safe_names) + 1L
+      C <- rbind(matrix(-1 / n_all, nrow = 1L, ncol = length(safe_names)),
+                 diag(length(safe_names)) - 1 / n_all)
+      est_c <- drop(C %*% est)
+      se_c  <- sqrt(rowSums((C %*% V) * C))
+      nms <- c(ref_team, other_teams)
+      list(est = stats::setNames(est_c, nms), se = stats::setNames(se_c, nms),
+           home_adv = unname(co["home_adv", "Estimate"]))
+    }
+
     # --- bt_results: logistic/glm Bradley-Terry fit on THIS season's completed
     # games (win = 1, loss = 0, draw = 0.5 — AFL draws are rare, ~1 in 300
     # games; folding them in at 0.5 avoids discarding the odd one rather than
@@ -1251,10 +1274,12 @@ if (torp_loaded) {
     # against an arbitrary reference team (coefficient pinned to 0 pre-fit),
     # then re-centered to mean 0 post-fit for interpretability and side-by-side
     # comparability with bt_model (mirrors the mean-centering panna's
-    # fit_bt_ratings() does). bt_results_se is the glm standard error relative
-    # to the (pre-centering) reference team, reported as-is — a cheap
-    # approximation that doesn't correct for the recentering covariance, fine
-    # for a display-only column.
+    # fit_bt_ratings() does). bt_results_se is the standard error of each
+    # team's CENTRED strength, taken from the full coefficient covariance via
+    # .centre_pinned_fit() — so every team, the pinned reference team
+    # included, gets a finite SE. (It used to be the raw glm SE of a
+    # difference from the reference team, with NA for the reference team
+    # itself, which published NA for Adelaide; OPUS-redteam-2026-10-25 F6.)
     season_played <- preds[preds$season == current_season & !is.na(preds$actual_margin), ]
     bt_results_dt <- data.table::data.table(team = strength_dt$team,
                                             bt_results = NA_real_, bt_results_se = NA_real_)
@@ -1280,15 +1305,10 @@ if (torp_loaded) {
         glm_df$home_adv <- 1
         glm_df$y <- y
         bt_fit <- stats::glm(y ~ . - 1, data = glm_df, family = stats::binomial())
-        co <- summary(bt_fit)$coefficients
-        est <- co[safe_names, "Estimate"];   names(est) <- other_teams
-        se  <- co[safe_names, "Std. Error"]; names(se)  <- other_teams
-        full_est <- c(setNames(0, ref_team), est)
-        full_se  <- c(setNames(NA_real_, ref_team), se)
-        full_est <- full_est - mean(full_est)
-        bt_results_dt <- data.table::data.table(team = names(full_est),
-                                                bt_results = round(as.numeric(full_est), 4),
-                                                bt_results_se = round(as.numeric(full_se), 4))
+        bt_c <- .centre_pinned_fit(bt_fit, safe_names, other_teams, ref_team)
+        bt_results_dt <- data.table::data.table(team = names(bt_c$est),
+                                                bt_results = round(as.numeric(bt_c$est), 4),
+                                                bt_results_se = round(as.numeric(bt_c$se), 4))
       }
     }
     strength_dt <- merge(strength_dt, bt_results_dt, by = "team", all.x = TRUE)
@@ -1351,8 +1371,8 @@ if (torp_loaded) {
     # sum-to-zero contrast constraint baked into the design matrix — simpler
     # to code and identical result for the *point estimates* (recentering is
     # just a location shift); the standard errors are, as with bt_results,
-    # reported relative to the pre-recentering reference team as a cheap
-    # approximation.
+    # those of the centred strengths, from .centre_pinned_fit() (finite for
+    # the reference team too).
     .fit_margin_strength <- function(games_df, margin_col) {
       games_df <- games_df[!is.na(games_df[[margin_col]]), ]
       teams <- sort(unique(c(games_df$home_team, games_df$away_team)))
@@ -1372,17 +1392,12 @@ if (torp_loaded) {
       lm_df$home_adv <- 1
       lm_df$margin <- games_df[[margin_col]]
       fit <- stats::lm(margin ~ . - 1, data = lm_df)
-      co <- summary(fit)$coefficients
-      est <- co[safe_names, "Estimate"];   names(est) <- other_teams
-      se  <- co[safe_names, "Std. Error"]; names(se)  <- other_teams
-      full_est <- c(setNames(0, ref_team), est)
-      full_se  <- c(setNames(NA_real_, ref_team), se)
-      full_est <- full_est - mean(full_est)
+      cf <- .centre_pinned_fit(fit, safe_names, other_teams, ref_team)
       list(
-        strength = data.table::data.table(team = names(full_est),
-                                          strength    = round(as.numeric(full_est), 3),
-                                          strength_se = round(as.numeric(full_se), 3)),
-        home_adv = round(unname(co["home_adv", "Estimate"]), 3)
+        strength = data.table::data.table(team = names(cf$est),
+                                          strength    = round(as.numeric(cf$est), 3),
+                                          strength_se = round(as.numeric(cf$se), 3)),
+        home_adv = round(cf$home_adv, 3)
       )
     }
 
