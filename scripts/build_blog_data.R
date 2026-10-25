@@ -2,6 +2,7 @@ library(arrow)
 library(dplyr)
 
 source("scripts/parquet_helpers.R")  # write_parquet_grouped()
+source("scripts/finals_lock.R")      # finals_constraints(), lock_finals_probs() (torpdata#108)
 
 # Load torp package for team name normalization (AFL_TEAM_ALIASES + torp_replace_teams)
 # Wrapped in tryCatch — missing deps (ggplot2, httr, lubridate) shouldn't block the pipeline
@@ -1130,10 +1131,28 @@ if (torp_loaded) {
     cat("injuries:", nrow(injuries_blog), "players\n")
   }
 
-  cat("Running", 3000, "injury-aware season simulations for", current_season,
+  # Finals already played this season (torpdata#108). simulate_afl_season() only
+  # reads regular-season rounds and re-simulates the whole bracket, so the finals
+  # odds are rebuilt below from the played results. Part-played finals keep only
+  # the simulations that match them, so they get more simulations.
+  finals_games <- if ("game_type" %in% names(preds)) {
+    preds[preds$season == current_season & preds$game_type %in% "finals",
+          c("round", "home_team", "away_team", "actual_margin")]
+  } else {
+    NULL
+  }
+  finals_fc <- tryCatch(
+    if (!is.null(finals_games)) finals_constraints(finals_games),
+    error = function(e) {
+      message("::warning::Could not read played finals, finals not locked: ", conditionMessage(e))
+      NULL
+    })
+  n_sims_run <- finals_sim_count(finals_fc)
+
+  cat("Running", n_sims_run, "injury-aware season simulations for", current_season,
       "from round", latest_round, "...\n")
 
-    sim_results <- simulate_afl_season(current_season, n_sims = 3000,
+    sim_results <- simulate_afl_season(current_season, n_sims = n_sims_run,
                                      injuries = inj_df,
                                      seed = 42, verbose = FALSE)
   summary_dt <- summarise_simulations(sim_results)
@@ -1141,6 +1160,26 @@ if (torp_loaded) {
 
   # Finals stage probabilities from raw finals data
   finals <- sim_results$finals
+  finals_games_locked <- 0L
+  finals_sims_used <- as.integer(n_sims_val)
+  finals_locked <- NULL
+  if (!is.null(finals_fc) && finals_fc$n_played > 0L) {
+    finals_locked <- tryCatch({
+      fin <- data.table::copy(finals)
+      fin[, team := torp_replace_teams(team)]
+      lock_finals_probs(fin, finals_fc$constraints)
+    }, error = function(e) {
+      message("::warning::Played finals could not be locked, publishing the unlocked odds: ",
+              conditionMessage(e))
+      NULL
+    })
+  }
+  if (!is.null(finals_locked)) {
+    finals_games_locked <- as.integer(finals_fc$n_played)
+    finals_sims_used <- finals_locked$n_used
+    cat("finals locked:", finals_games_locked, "played games,", finals_locked$mode,
+        "-", finals_sims_used, "of", n_sims_val, "simulations used\n")
+  }
   finals_stage <- finals[, .(
     premiers_pct    = sum(finals_finish == 5) / n_sims_val,
     runner_up_pct   = sum(finals_finish == 4) / n_sims_val,
@@ -1166,6 +1205,7 @@ if (torp_loaded) {
   # Normalize sim team names → canonical full names (matching torp_ratings.parquet)
   summary_dt[, team := torp_replace_teams(team)]
   finals_stage[, team := torp_replace_teams(team)]
+  if (!is.null(finals_locked)) finals_stage <- finals_locked$stage  # already canonical names
   pos_dist[, team := torp_replace_teams(team)]
 
   # Current standings from internal AFL API (pre-season = zeros)
@@ -1209,6 +1249,11 @@ if (torp_loaded) {
   sim_output[, season := current_season]
   sim_output[, round := latest_round]
   sim_output[, n_sims := n_sims_val]
+  # How much of the finals odds is a played result (torpdata#108): finals games
+  # played, and the simulations they are read from (0 = Grand Final played, the
+  # odds are the result itself).
+  sim_output[, finals_games_locked := finals_games_locked]
+  sim_output[, finals_sims_used := finals_sims_used]
 
   write_parquet(as.data.frame(sim_output), "blog/simulations.parquet")
   cat("simulations:", nrow(sim_output), "teams\n")
