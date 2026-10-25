@@ -137,14 +137,28 @@ preds_list <- lapply(pred_files, function(f) {
     NULL
   }
 })
+# Only seasons from LIVE_LOCK_FIRST_SEASON on were locked live at kickoff.
+# The 2021-2025 predictions_<season> files were all written on 2026-04-12 by
+# running the predictions pipeline over finished seasons: its match models
+# train on every completed match (torp R/match_train.R, train_filter = NULL),
+# including the season being "predicted", and a first run for a season saves
+# every row as if frozen at kickoff. Those rows are hindsight, so they are
+# tagged "backfill" and must not be scored as a pre-game record
+# (OPUS-redteam-2026-10-25 B1, torpverse/docs/reviews).
+LIVE_LOCK_FIRST_SEASON <- 2026L
 preds <- bind_rows(preds_list) |>
-  mutate(round = as.integer(round), source = "locked") |>
+  mutate(
+    round = as.integer(round),
+    source = if_else(season >= LIVE_LOCK_FIRST_SEASON, "locked", "backfill")
+  ) |>
   arrange(season, round, desc(abs(pred_margin)))
+cat("Predictions by source:",
+    paste(names(table(preds$source)), table(preds$source), sep = "=", collapse = ", "), "\n")
 
-# Backfill with retrodictions for rounds that have no locked predictions.
+# Backfill with retrodictions for rounds that have no locked or backfill row.
 # Retrodiction rows use current/final ratings applied uniformly to every match
-# (including past ones), so they're leaky vs. the walk-forward-safe locked
-# predictions above — tagged via `source` so consumers (e.g. the blog's as-at
+# (including past ones), so they're leaky vs. the live locked predictions
+# above — tagged via `source` so consumers (e.g. the blog's as-at
 # time-travel scrubber) can filter them out (torpdata#78).
 retro_files <- list.files("source", pattern = "^retrodictions_", full.names = TRUE)
 if (length(retro_files) > 0) {
@@ -189,6 +203,18 @@ if (torp_loaded) {
   preds$away_team <- torp_replace_teams(preds$away_team)
   cat("Team names normalized:", paste(sort(unique(preds$home_team)), collapse = ", "), "\n")
 }
+
+# The retrodiction anti_join above runs before team names are normalized, so
+# for 2021-2025 it matched nothing and every game carried a backfill row AND a
+# retrodiction twin. The blog's dedupePredictions() only prefers "locked", so
+# with two non-locked twins it would keep whichever sorts first. Drop the
+# retrodiction twin here, now that names agree.
+n_before <- nrow(preds)
+preds <- preds |>
+  group_by(season, round, home_team, away_team) |>
+  filter(source != "retrodiction" | all(source == "retrodiction")) |>
+  ungroup()
+cat("Dropped", n_before - nrow(preds), "retrodiction rows that duplicate a locked or backfill row\n")
 
 # ---------------------------------------------------------------------------
 # game_type lookup (issue #55): "regular" vs "finals" from the AFL API round name.
