@@ -410,6 +410,31 @@ game_files <- list.files("source", pattern = "^player_game_ratings_[0-9]{4}[.]pa
 if (length(game_files) == 0) stop("No player_game_ratings files found in source/")
 game_raw <- lapply(game_files, read_parquet) |> bind_rows()
 
+# Season parquets built before torp#263 carry np_own / np_won / np_team (team =
+# the whole pool). Map them to the new names exactly as torp's own no-breakdown
+# path does (np_disp = own acts, np_contest = won back, np_recv NA), so old and
+# new seasons line up and every row's parts still add up to net_points.
+if (all(c("np_own", "np_won") %in% names(game_raw))) {
+  for (col in c("np_disp", "np_recv", "np_contest")) {
+    if (!col %in% names(game_raw)) game_raw[[col]] <- NA_real_
+  }
+  old_row <- is.na(game_raw$np_disp) & !is.na(game_raw$np_own)
+  game_raw$np_disp[old_row]    <- game_raw$np_own[old_row]
+  game_raw$np_contest[old_row] <- game_raw$np_won[old_row]
+  message("game-logs: ", sum(old_row), " player-match rows mapped from pre-torp#263 ",
+          "np_own/np_won (np_recv NA on those rows)")
+  game_raw$np_own <- NULL
+  game_raw$np_won <- NULL
+}
+if (all(c("net_points", "np_disp", "np_contest", "np_team") %in% names(game_raw))) {
+  np_gap <- with(game_raw, abs(np_disp + dplyr::coalesce(np_recv, 0) + np_contest +
+                                 np_team - net_points))
+  if (any(np_gap > 1e-6, na.rm = TRUE)) {
+    stop("game-logs: net_points parts do not add up on ", sum(np_gap > 1e-6, na.rm = TRUE),
+         " rows (max gap ", signif(max(np_gap, na.rm = TRUE), 3), ")")
+  }
+}
+
 # A player cannot play the same match twice, so a duplicated player_id+match_id
 # means two sources of the same game were combined. Asserted here rather than
 # trusting the filename patterns above: on 2026-08-18 a candidate vintage
