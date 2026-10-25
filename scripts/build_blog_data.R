@@ -25,6 +25,7 @@ if (!is.null(torp_path)) {
 # publish twice, and simulations / team strength are skipped. Local runs keep
 # the warn-and-continue behaviour.
 if (!torp_loaded && identical(Sys.getenv("GITHUB_ACTIONS"), "true")) {
+  message("::error::torp failed to load in CI; refusing to publish blog data without team-name normalization")
   stop("torp failed to load in CI; refusing to publish blog data without team-name normalization")
 }
 
