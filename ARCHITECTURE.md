@@ -22,7 +22,7 @@ graph TB
         DAILY["daily-data-release.yml<br/>(12 cron jobs/day)"]
         LINEUP["lineup-predictions.yml<br/>(mid-week lineup detect)"]
         BLOG_WF["build-blog-data.yml<br/>(aggregation pipeline)"]
-        SCRIPT["scripts/build_blog_data.R<br/>(640-line pipeline)"]
+        SCRIPT["scripts/build_blog_data.R"]
     end
 
     subgraph Releases["GitHub Releases (24 tags)"]
@@ -161,7 +161,7 @@ released via torpmodels' `stat-models` tag, not stored on torpdata.
 
 **Purpose**: Aggregate release data into blog-ready parquets; upload to Cloudflare R2 for the inthegame-blog.
 
-**File**: `.github/workflows/build-blog-data.yml` + `scripts/build_blog_data.R` (640 lines)
+**File**: `.github/workflows/build-blog-data.yml` + `scripts/build_blog_data.R`
 
 **Trigger**: Manual dispatch or `blog-trigger` repository dispatch from torp
 
@@ -213,7 +213,7 @@ torpdata/
 │   ├── build-blog-data.yml       # Blog aggregation + R2 upload
 │   └── lineup-predictions.yml    # Mid-week lineup detection
 ├── scripts/
-│   └── build_blog_data.R         # 640-line aggregation pipeline
+│   └── build_blog_data.R         # aggregation pipeline
 ├── blog/                         # Output: blog-ready parquets
 ├── source/                       # Intermediate: parquets fetched from releases
 ├── data/                         # Local cache (gitignored)
