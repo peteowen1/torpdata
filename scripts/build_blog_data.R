@@ -137,14 +137,28 @@ preds_list <- lapply(pred_files, function(f) {
     NULL
   }
 })
+# Only seasons from LIVE_LOCK_FIRST_SEASON on were locked live at kickoff.
+# The 2021-2025 predictions_<season> files were all written on 2026-04-12 by
+# running the predictions pipeline over finished seasons: its match models
+# train on every completed match (torp R/match_train.R, train_filter = NULL),
+# including the season being "predicted", and a first run for a season saves
+# every row as if frozen at kickoff. Those rows are hindsight, so they are
+# tagged "backfill" and must not be scored as a pre-game record
+# (OPUS-redteam-2026-10-25 B1, torpverse/docs/reviews).
+LIVE_LOCK_FIRST_SEASON <- 2026L
 preds <- bind_rows(preds_list) |>
-  mutate(round = as.integer(round), source = "locked") |>
+  mutate(
+    round = as.integer(round),
+    source = if_else(season >= LIVE_LOCK_FIRST_SEASON, "locked", "backfill")
+  ) |>
   arrange(season, round, desc(abs(pred_margin)))
+cat("Predictions by source:",
+    paste(names(table(preds$source)), table(preds$source), sep = "=", collapse = ", "), "\n")
 
-# Backfill with retrodictions for rounds that have no locked predictions.
+# Backfill with retrodictions for rounds that have no locked or backfill row.
 # Retrodiction rows use current/final ratings applied uniformly to every match
-# (including past ones), so they're leaky vs. the walk-forward-safe locked
-# predictions above — tagged via `source` so consumers (e.g. the blog's as-at
+# (including past ones), so they're leaky vs. the live locked predictions
+# above — tagged via `source` so consumers (e.g. the blog's as-at
 # time-travel scrubber) can filter them out (torpdata#78).
 retro_files <- list.files("source", pattern = "^retrodictions_", full.names = TRUE)
 if (length(retro_files) > 0) {
