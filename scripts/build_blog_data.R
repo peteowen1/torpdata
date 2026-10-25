@@ -204,6 +204,18 @@ if (torp_loaded) {
   cat("Team names normalized:", paste(sort(unique(preds$home_team)), collapse = ", "), "\n")
 }
 
+# The retrodiction anti_join above runs before team names are normalized, so
+# for 2021-2025 it matched nothing and every game carried a backfill row AND a
+# retrodiction twin. The blog's dedupePredictions() only prefers "locked", so
+# with two non-locked twins it would keep whichever sorts first. Drop the
+# retrodiction twin here, now that names agree.
+n_before <- nrow(preds)
+preds <- preds |>
+  group_by(season, round, home_team, away_team) |>
+  filter(source != "retrodiction" | all(source == "retrodiction")) |>
+  ungroup()
+cat("Dropped", n_before - nrow(preds), "retrodiction rows that duplicate a locked or backfill row\n")
+
 # ---------------------------------------------------------------------------
 # game_type lookup (issue #55): "regular" vs "finals" from the AFL API round name.
 #
