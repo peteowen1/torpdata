@@ -488,10 +488,15 @@ game_logs <- game_raw |>
          # Optional until a torp release carries them.
          any_of(c("wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team",
                   "wpa_neutral_own", "wpa_neutral_won", "wpa_neutral_team")),
-         # net_points in the same three parts, uncentred (torp .np_raw_parts()):
-         # they add up to net_points, where epv_recv/disp/spoil are centred for
-         # the rating and add up to `epv`. Optional until a torp release has them.
-         any_of(c("np_own", "np_won", "np_team")),
+         # net_points in four parts, uncentred (torp#263, .np_raw_parts()): each
+         # the sum of its play types in np-breakdown-<season> (Disposing,
+         # Receiving, Contests & stoppages, Team pool & anchor), so they add up
+         # to net_points, where epv_recv/disp/spoil are centred for the rating
+         # and add up to `epv`. Seasons with no breakdown carry np_recv NA and
+         # np_disp = all own acts. These replace np_own / np_won; np_team keeps
+         # its name, now the breakdown's team family. Optional until a torp
+         # release has them.
+         any_of(c("np_disp", "np_recv", "np_contest", "np_team")),
          any_of(c("psv", "osv", "dsv")),
          match_id) |>
   arrange(player_id, season, round) |>
@@ -500,7 +505,7 @@ game_logs <- game_raw |>
   # ledger columns landed. 4 dp: 3.1 MB, team net_points still within 0.0005
   # of the real margin, and the site shows at most 2 dp. 3 dp drifted to 0.005
   # and let parts-vs-EPV differ by 0.02 on screen (measured 2026-09-27).
-  mutate(across(any_of(c("net_points", "np_own", "np_won", "np_team",
+  mutate(across(any_of(c("net_points", "np_disp", "np_recv", "np_contest", "np_team",
                          "wpa_net", "wpa_neutral", "wpa_own", "wpa_won", "wpa_team",
                          "wpa_neutral_own", "wpa_neutral_won", "wpa_neutral_team",
                          "psv", "osv", "dsv")), ~ round(.x, 4)))
