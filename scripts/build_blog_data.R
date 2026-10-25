@@ -19,6 +19,15 @@ if (!is.null(torp_path)) {
 } else {
   message("::warning::torp package not found — team name normalization unavailable")
 }
+# In CI torp is checked out on purpose, so failing to load it is a broken run,
+# not an optional degrade: without its team-name normalization, prediction
+# rows for the same game stop matching (full vs short names) and past games
+# publish twice, and simulations / team strength are skipped. Local runs keep
+# the warn-and-continue behaviour.
+if (!torp_loaded && identical(Sys.getenv("GITHUB_ACTIONS"), "true")) {
+  message("::error::torp failed to load in CI; refusing to publish blog data without team-name normalization")
+  stop("torp failed to load in CI; refusing to publish blog data without team-name normalization")
+}
 
 # Player ratings - predictive TORP ratings (career-weighted with exponential decay)
 all_ratings <- read_parquet("source/torp_ratings.parquet")
