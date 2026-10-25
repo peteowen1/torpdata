@@ -9,6 +9,14 @@
 # builds the per-stage finals probabilities from the simulations that agree with
 # those results. It reads only torp's finals output, so torp is untouched.
 #
+# Exact once the Grand Final is played ("decided" mode). Part-way through the
+# finals it is an approximation: a simulation is kept when every team's finish
+# lands in its range, but the simulation output has only finals_finish per team,
+# not who played whom. The bracket crosses over at the Preliminary Finals (QF1
+# winner v SF2 winner), so after the Semis a kept simulation can have the right
+# four teams in the wrong pairings. The fix needs the sim to return its fixtures;
+# left to the browser/R sim replacement (inthegame-blog#805).
+#
 # finals_finish scale (torp simulate_finals, Final Ten System):
 #   0 lost Wildcard, 1 lost Elimination Final, 2 lost Semi Final,
 #   3 lost Preliminary Final, 4 runner-up, 5 premier.
