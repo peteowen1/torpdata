@@ -15,3 +15,6 @@ data/
 
 # Claude Code files
 .claude/
+
+# wrangler (Cloudflare CLI) local cache
+.wrangler/
