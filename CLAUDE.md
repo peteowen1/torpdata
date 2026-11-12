@@ -102,7 +102,8 @@ gh -R peteowen1/torpdata release view pbp-data --json assets \
 # Manually trigger daily release
 gh workflow run daily-data-release.yml --ref main
 
-# Manually trigger blog data build
+# Manually trigger blog data build (off-season it does not fire on its own:
+# run it after changing build-blog-data.yml or its outputs, e.g. blog/ratings-latest.parquet)
 gh workflow run build-blog-data.yml --ref main
 ```
 
