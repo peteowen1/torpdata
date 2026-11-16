@@ -1297,6 +1297,13 @@ if (torp_loaded) {
     message("::warning::simulations-history failed, skipping: ", conditionMessage(e))
   })
 
+  # The season-sim part ends here, so a failure above can't take out
+  # team-strength.parquet (torpdata#129).
+  }, error = function(e) {
+    message("::warning::Simulation failed, skipping simulations.parquet: ",
+            conditionMessage(e))
+  })
+
   # --- Team strength — small residual/BT reference table for the browser sim ---
   # Mirrors the World Cup's wc2026_team_strength.parquet (pannaverse/panna
   # data-raw/match-predictions-opta/12_export_wc2026_blog.R). The blog's
@@ -1304,17 +1311,25 @@ if (torp_loaded) {
   # no access to R/mgcv, so it has been missing the per-team GAM quality
   # residual entirely (e.g. Fremantle overperforms its torp rating by several
   # points/game in 2026) — this export lets the browser sim add that term.
-  # In its own nested tryCatch so a BT-fit hiccup can't take out simulations.parquet.
+  # Built WITHOUT running the season sim (torpdata#129): it needs no simulation
+  # results, only prepare_sim_data(). Its own tryCatch, so neither a
+  # simulate_afl_season() failure nor a BT-fit hiccup takes out the other file.
+  # current_season, latest_round and inj_df are set at the top of the sim block.
   tryCatch({
-    # sim_results$original_ratings IS prep$sim_teams from prepare_sim_data()
-    # (torp/R/season_sim.R) — the exact team/torp/residual_mean/residual_se the
-    # season sim itself samples from per-sim (team_residuals = "auto" ->
-    # .extract_team_residuals()). Reusing it here means this export can never
-    # diverge from what the sim uses. residual_mean/residual_se ARE meant to be
-    # consumed as a sim input by the browser sim (that's the point of this
-    # export) — unlike bt_results/bt_model below, which are DISPLAY /
-    # REFERENCE ONLY and must never be fed into any sim (R or browser).
-    strength_dt <- data.table::as.data.table(sim_results$original_ratings)
+    # prepare_sim_data() (torp/R/season_sim.R) is the exact function
+    # simulate_afl_season() calls first, with the same arguments (injury-aware
+    # torp, team_residuals = "auto" -> .extract_team_residuals()). Its sim_teams
+    # is what the sim samples from per-sim, so team/torp/residual_mean/
+    # residual_se here are identical to what the sim used (and to the old
+    # file, which took them from sim_results$original_ratings = the same
+    # object), without running a single simulation. residual_mean/residual_se
+    # ARE meant to be consumed as a sim input by the browser sim (that's the
+    # point of this export) — unlike bt_results/bt_model below, which are
+    # DISPLAY / REFERENCE ONLY and must never be fed into any sim (R or browser).
+    prep_strength <- prepare_sim_data(season = current_season, injuries = inj_df,
+                                      team_residuals = "auto")
+    strength_dt <- data.table::as.data.table(prep_strength$sim_teams)
+    rm(prep_strength)
     strength_dt[, team := torp_replace_teams(team)]
     strength_dt <- strength_dt[, .(team, torp, residual_mean, residual_se)]
 
@@ -1523,10 +1538,6 @@ if (torp_loaded) {
     message("::warning::Team-strength export failed, skipping team-strength.parquet: ",
             conditionMessage(e))
   })
-}, error = function(e) {
-  message("::warning::Simulation failed, skipping simulations.parquet: ",
-          conditionMessage(e))
-})
 } else {
   message("::warning::torp package not loaded — skipping simulations")
 }
