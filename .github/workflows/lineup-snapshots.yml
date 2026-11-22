@@ -1,0 +1,75 @@
+name: Team-List Snapshots
+
+# Keeps every version of the AFL team lists, not only the final one
+# (teams-data is overwritten each release). Each run fetches every match whose
+# bounce is within 6 hours behind or 8 days ahead and appends any changed list,
+# raw and parsed, to the teams-snapshots release. Runs with no match in that
+# window upload nothing. Code: torp R/lineup_snapshots.R and
+# data-raw/01-data/snapshot_lineups.R. Consumer: fplverse sports/afl/teams_named.py.
+#
+# Hourly every day. Lists are usually first named Wed/Thu ~6-7:30 PM AEST,
+# but a Tuesday naming (or a midweek match) is caught too; runs with no match
+# in the window cost one fixtures call and upload nothing.
+# GitHub fires `schedule` only from the DEFAULT branch.
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+env:
+  GITHUB_PAT: ${{ secrets.WORKFLOW_PAT }}
+  R_KEEP_PKG_SOURCE: yes
+  piggyback_cache_duration: 1
+  VERSEBUS_STRICT: "1"
+
+concurrency:
+  group: lineup-snapshots
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout torpdata
+        uses: actions/checkout@v7
+
+      - name: Checkout torp
+        uses: actions/checkout@v7
+        with:
+          repository: peteowen1/torp
+          token: ${{ secrets.WORKFLOW_PAT }}
+          path: torp
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4.0'
+          use-public-rspm: true
+
+      - name: Setup R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          working-directory: torp
+          cache-version: 3
+          extra-packages: |
+            any::devtools
+            any::piggyback
+            any::cli
+            any::glue
+            any::data.table
+            any::janitor
+            any::lubridate
+          needs: |
+            devtools
+
+      - name: Snapshot team lists
+        working-directory: torp
+        run: Rscript data-raw/01-data/snapshot_lineups.R
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
