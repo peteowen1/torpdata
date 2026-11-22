@@ -7,13 +7,14 @@ name: Team-List Snapshots
 # window upload nothing. Code: torp R/lineup_snapshots.R and
 # data-raw/01-data/snapshot_lineups.R. Consumer: fplverse sports/afl/teams_named.py.
 #
-# Hourly on every UTC day except Tuesday: that covers Wednesday evening AEST
-# (lists are first named Wed/Thu ~6-7:30 PM) through Monday night games.
+# Hourly every day. Lists are usually first named Wed/Thu ~6-7:30 PM AEST,
+# but a Tuesday naming (or a midweek match) is caught too; runs with no match
+# in the window cost one fixtures call and upload nothing.
 # GitHub fires `schedule` only from the DEFAULT branch.
 
 on:
   schedule:
-    - cron: '0 * * * 0,1,3,4,5,6'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 env:
