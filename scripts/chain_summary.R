@@ -15,6 +15,12 @@
 #   * Rows: the feed lists the event at every chain boundary twice; the copy
 #     (repeat_of_prev) is dropped. Its np_value is folded into the row it
 #     repeats, so chains still add up to the margin (chain-viz.js).
+#     Exception (agreed with the blog session 2026-11-24): a copy that is the
+#     whole of its own chain AND carries a score is kept as that chain's row,
+#     with its own np_value. These are one-row rushed-behind chains, 5-11 a
+#     season; dropping them lost the point. Unscored copy-only chains (~250 a
+#     season) are still dropped: keeping them would change which chain counts
+#     as the "next chain" after a turnover, which is a rule change, not a fix.
 #   * Chain team: the side that scored in it (the last score row's team; a
 #     rushed behind belongs to the side it was rushed against, as the feed
 #     records it), otherwise the side with most rows (ties: the side seen
@@ -53,6 +59,18 @@ suppressMessages(library(data.table))
 
 CHAIN_SCORE_PTS <- c(GOAL = 6L, BEHIND = 1L, RUSHED_BEHIND = 1L)
 
+# Sets repeat_of_prev to "this copy is dropped", by reference: NA becomes FALSE,
+# and a scored copy that is the whole of its chain is kept (see the header).
+# Shared by the build and its check so both count the same rows.
+.mark_droppable_copies <- function(ev) {
+  ev[is.na(repeat_of_prev), repeat_of_prev := FALSE]
+  ev[, keep_copy := repeat_of_prev & all(repeat_of_prev) & any(!is.na(score_type)),
+     by = .(match_id, chain_number)]
+  ev[keep_copy == TRUE, repeat_of_prev := FALSE]
+  ev[, keep_copy := NULL]
+  invisible(ev)
+}
+
 #' @param events chain-events rows for one season (build_afl_chains.R `events`).
 #' @return data.table, one row per (match_id, chain_number).
 build_chain_summary <- function(events) {
@@ -66,7 +84,7 @@ build_chain_summary <- function(events) {
   if (length(miss)) stop("chain-events lacks: ", paste(miss, collapse = ", "))
   ev <- ev[, ..need]
   setorder(ev, match_id, display_order)
-  ev[is.na(repeat_of_prev), repeat_of_prev := FALSE]
+  .mark_droppable_copies(ev)
 
   # Fold each boundary copy's np_value into the last kept row before it.
   ev[, kept_pos := cummax(fifelse(repeat_of_prev, 0L, seq_len(.N))), by = match_id]
@@ -209,7 +227,10 @@ build_chain_summary <- function(events) {
 #' Assertions the build must pass before writing (stops on failure).
 #' @param cs build_chain_summary() output; @param events the same chain-events.
 check_chain_summary <- function(cs, events) {
-  ev <- as.data.table(events)
+  ev <- copy(as.data.table(events))
+  all_scores <- ev[!is.na(score_type) & !is.na(score_team_id),
+                   .(p = sum(CHAIN_SCORE_PTS[score_type])), by = .(match_id, team_id = score_team_id)]
+  .mark_droppable_copies(ev)
   n_chains <- uniqueN(ev[repeat_of_prev %in% FALSE, .(match_id, chain_number)])
   if (nrow(cs) != n_chains) stop(sprintf("chain-summary: %d rows for %d chains", nrow(cs), n_chains))
   if (anyDuplicated(cs[, .(match_id, chain_number)])) stop("chain-summary: duplicate (match_id, chain_number)")
@@ -219,13 +240,18 @@ check_chain_summary <- function(cs, events) {
   # turnover chain carries it; the summary reads it off the last row.
   if (tov_cs != tov_ev) stop(sprintf("chain-summary: %d turnover chains, chain-events has %d", tov_cs, tov_ev))
   if (mean(is.na(cs$team_id)) > 0.01) stop("chain-summary: more than 1% of chains have no team")
-  # Points: every chain's own points add up to each side's score rows.
-  pts_ev <- ev[repeat_of_prev %in% FALSE & !is.na(score_type),
-               .(p = sum(CHAIN_SCORE_PTS[score_type])), by = match_id]
-  pts_cs <- cs[, .(p = sum(points)), by = match_id]
-  j <- merge(pts_ev, pts_cs, by = "match_id", all = TRUE)
-  j[is.na(j)] <- 0
-  if (any(j$p.x != j$p.y)) stop("chain-summary: chain points do not add up to the score rows in ",
-                                sum(j$p.x != j$p.y), " match(es)")
+  # Points: per match and side, the chains' points equal ALL of chain-events'
+  # score rows, dropped copies included. (Comparing against kept rows only hid
+  # 5-11 lost rushed behinds a season.)
+  pts_cs <- cs[!is.na(team_id), .(p = sum(points)), by = .(match_id, team_id)]
+  j <- merge(all_scores, pts_cs, by = c("match_id", "team_id"), all = TRUE)
+  j[is.na(p.x), p.x := 0]; j[is.na(p.y), p.y := 0]
+  if (any(j$p.x != j$p.y)) stop("chain-summary: chain points differ from the score rows for ",
+                                sum(j$p.x != j$p.y), " match-side(s), first ", j[p.x != p.y, match_id][1])
+  # A turnover chain should not score for its own side. The feed itself does
+  # this a handful of times (2024: 3, e.g. a behind then the opposition's
+  # kick-in inside one chain), so it is logged, not fatal.
+  n_tp <- cs[final_state == "turnover" & points > 0, .N]
+  if (n_tp > 0) message("chain-summary: ", n_tp, " turnover chain(s) carry points, as the feed records them")
   invisible(list(chains = nrow(cs), turnovers = tov_cs))
 }
