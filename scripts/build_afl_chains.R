@@ -34,6 +34,7 @@ if (is.null(torp_path)) {
 }
 suppressMessages(devtools::load_all(torp_path, quiet = TRUE))
 source("scripts/parquet_helpers.R")  # write_parquet_grouped()
+source("scripts/chain_summary.R")    # build_chain_summary() (torpdata#131)
 # chain-events needs load_score_events() (torp 78fa65b3). Checked here, not
 # inside the per-season tryCatch, so a torp checkout that is too old stops
 # the build instead of quietly writing no chain-events files.
@@ -523,6 +524,22 @@ for (season in seasons) {
         round(file.info(bt_file)$size / 1024^2, 2), "MB )\n")
   }, error = function(e) {
     message("::warning::", bt_file, " NOT written (pages fall back to chain-events): ", conditionMessage(e))
+  })
+  # One row per chain, for the blog's Chain Finder (torpdata#131; rules in
+  # scripts/chain_summary.R). Sorted by team, one row group per club, so a
+  # club's chains read on their own. Optional: a failure here must not cost
+  # chain-events or player-quarters.
+  cs_file <- file.path("blog", paste0("chain-summary-", season, ".parquet"))
+  tryCatch({
+    cs <- build_chain_summary(events)
+    chk <- check_chain_summary(cs, events)
+    n_cs <- write_parquet_grouped(cs, cs_file, by = c("team", "match_id", "chain_number"))
+    cat("Wrote", cs_file, ":", chk$chains, "chains (", chk$turnovers, "turnovers,",
+        sum(!is.na(cs$turnover_blame_player_id)), "blamed ),", n_cs, "row groups (",
+        round(file.info(cs_file)$size / 1024^2, 2), "MB )\n")
+  }, error = function(e) {
+    if (file.exists(cs_file)) unlink(cs_file)   # never upload a half-checked file
+    message("::warning::", cs_file, " NOT written: ", conditionMessage(e))
   })
 
   # ==== player-quarters-{season}.parquet =====================================
