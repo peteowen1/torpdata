@@ -93,7 +93,10 @@ build_chain_summary <- function(events) {
   a[, sg := fifelse(!is.na(ep_team_id) & !is.na(owner) & owner != ep_team_id, -1, 1)]
   a[, home_wp := fifelse(is.na(wp) | is.na(team_id), NA_real_, fifelse(team_id == home_team_id, wp, 1 - wp))]
   a[, home_wpa := fifelse(is.na(wpa) | is.na(team_id), 0, fifelse(team_id == home_team_id, wpa, -wpa))]
+  # Rounded per row to 2 decimals before summing, half away from zero, as
+  # chain-viz.js finishChain() does so its header equals the visible column.
   a[, value := sg * fcoalesce(delta_ep, 0)]
+  a[, value := sign(value) * round(abs(value) * 100 + 1e-9) / 100]
   # x in the home side's frame (chain-viz.js px).
   a[, px := fifelse(frame_team_id == home_team_id, as.numeric(x), -as.numeric(x))]
   a[, py := fifelse(frame_team_id == home_team_id, as.numeric(y), -as.numeric(y))]
@@ -159,7 +162,7 @@ build_chain_summary <- function(events) {
       home_pts = as.integer(sum(pts[!is.na(score_team_id) & score_team_id == hid])),
       away_pts = as.integer(sum(pts[!is.na(score_team_id) & score_team_id == aid])),
       net_points = if (is.na(tm)) NA_real_ else dir * sum(np_row, na.rm = TRUE),
-      ep_change = ep_sum,
+      ep_change = round(ep_sum, 5),
       wp_start = wp0, wp_end = wp0 + wpa_team, wpa = wpa_team,
       fast_break = !is.na(fb_secs), fast_break_secs = fb_secs,
       first_player_id = if (length(k1 <- own[!is.na(player_id[own])])) player_id[k1[1]] else NA_character_,
