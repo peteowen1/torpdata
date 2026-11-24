@@ -17,7 +17,8 @@
 #     repeats, so chains still add up to the margin (chain-viz.js).
 #     Exception (agreed with the blog session 2026-11-24): a copy that is the
 #     whole of its own chain AND carries a score is kept as that chain's row,
-#     with its own np_value. These are one-row rushed-behind chains, 5-11 a
+#     with its own np_value (all its rows, if it has several; 2021-2026 has only
+#     one-row ones). These are rushed-behind chains, 5-11 a
 #     season; dropping them lost the point. Unscored copy-only chains (~250 a
 #     season) are still dropped: keeping them would change which chain counts
 #     as the "next chain" after a turnover, which is a rule change, not a fix.
