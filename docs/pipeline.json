@@ -1,0 +1,100 @@
+{
+  "repo": "peteowen1/torpdata",
+  "title": "torpdata CI pipeline",
+  "about": "What torpdata's GitHub Actions do on a match day, in order, and how long each part takes. Two workflows: the Daily Data Release (fetches the new match data from the AFL and uploads it to the torpdata releases, then tells torp to recompute ratings) and, later in the same chain, Build blog data (starts after torp finishes its ratings and predictions, and puts the data the site reads on the R2 store). The ratings and predictions themselves are computed by the torp repository's workflow, described in that repo's guide.",
+  "runs": 5,
+  "pipelines": [
+    {
+      "name": "Daily data release",
+      "workflow": "daily-data-release.yml",
+      "about": "One job. It fetches the latest match data from the AFL API and uploads it to the torpdata GitHub releases (chains, play-by-play, player stats, fixtures, results, teams, player details, player game data, derived ratings, injuries). Most runs find nothing new and stop after about two minutes, mainly spent installing R, so they say nothing about a real release and are left out. The guide cannot tell a no-new-data run from a real one except by how it was started, so it counts only manual (Run workflow) runs that took over 5.5 minutes. Among the last 100 successful runs (25 Oct to 25 Nov 2026, the off-season) exactly one released data: the manual run of 26 Oct. So the timings below are ONE run, not a median of five. In the season, scheduled runs that release data will not be counted until the select rule is changed to include them; no-new-data runs that happen to be slow (installing R took up to 17 minutes in some) would then have to be filtered out some other way.",
+      "triggers": "Started by GitHub's schedule: a run every few hours after games on Thursday to Monday (the times in the workflow file are written as Sydney winter time, AEST, so an hour later in summer) and a daily safety net at 2am AEST; or by hand with Run workflow (force_release skips the new-games check, rebuild_aggregates rebuilds every season since 2021). When it releases data it dispatches the ratings-trigger event to the torp repository, which starts torp's Daily Ratings & Predictions run; that run's timings are in torp's own guide, and its end starts the Build blog data pipeline below.",
+      "select": {
+        "events": [
+          "workflow_dispatch"
+        ],
+        "require_jobs": [
+          "^release-data$"
+        ],
+        "min_seconds": 330,
+        "scan": 100
+      },
+      "jobs": [
+        {
+          "name": "release-data",
+          "match": "^release-data$",
+          "about": "Decides whether there is anything new, uploads the new data to the torpdata releases, checks the uploads landed, and starts torp's ratings run",
+          "steps": {
+            "Checkout torpdata": "Downloads this repo's code",
+            "Checkout torp": "Downloads the torp package (peteowen1/torp), which holds the release script",
+            "Setup R": "Installs R 4.4.0",
+            "Setup R dependencies": "Installs the R packages torp needs (from a cache when it can)",
+            "Run daily release": "Runs run_daily_release() from torp's data-raw/01-data/daily_release.R. It first decides between a full release (a match ended in the last 12 hours, or one finished in the last 48 hours is missing from a released file, or the run was forced), a team-only release (no new games but the team lineups changed) and nothing. A full release updates the chains and play-by-play files, then expected goals, fixtures, results, player stats, teams, player details, player game data and score events, then the derived player game ratings, player season ratings, expected-points and win-probability chart data, PSR (player stat ratings) and weather, and always an injury snapshot. Each file goes to its own torpdata release",
+            "Verify release uploads": "Checks that the key files (play-by-play, chains and player stats, or the teams file for a team-only release) were uploaded in the last 24 hours; if none were, torp is not told to run",
+            "Rebuild historical aggregates": "Only on a manual run with rebuild_aggregates ticked: rebuilds every season's combined files since 2021 (data-raw/01-data/create_aggregated_files.R)",
+            "Get release info": "Reads the current AFL season and round, to pass on to torp",
+            "Wait for release-list propagation": "Waits 30 seconds so GitHub's list of releases shows the new upload before torp reads it",
+            "Dispatch ratings trigger to torp": "Sends the ratings-trigger event to the torp repository, which starts its Daily Ratings & Predictions run",
+            "Create release summary": "Writes the season, round and what was updated to the run's summary page",
+            "No-data summary": "When nothing was released: writes a note saying no new games or lineup changes were found (expected in the off-season and between rounds)",
+            "Notify on partial data-type failures": "Only if some data types failed while the rest uploaded: opens or updates a tracking issue in this repo",
+            "Notify on failure": "Only if the run failed: opens or updates a tracking issue in this repo"
+          },
+          "log": {
+            "tables": [
+              {
+                "start": "Timing Summary",
+                "row": "^(?P<name>[a-z_]+): (?P<seconds>\\d+(?:\\.\\d+)?) sec elapsed\\s*$",
+                "labels": [
+                  "Parts of the daily release (its own timing summary)"
+                ]
+              }
+            ],
+            "about": {
+              "season_data": "Adds the current round to the season's combined chains and play-by-play files",
+              "seasonal_data": "Expected goals, fixtures, results, player stats, teams, player details, player game data and score events for the current season",
+              "derived_data": "Player game ratings, player season ratings, the expected-points and win-probability chart data, PSR and weather",
+              "total": "The whole script, as it counts itself (setup of R is not included)"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Build blog data",
+      "workflow": "build-blog-data.yml",
+      "about": "One job. It takes the ratings and predictions that torp has just released, joins them with the match, player and shot data into the parquet files the inthegame-blog site reads (ratings, predictions, game logs, shots, season simulations, team strength and so on), and uploads them to the Cloudflare R2 store under inthegame-data/afl/. All five most recent runs are counted.",
+      "triggers": "Started by the torp repository's Daily Ratings & Predictions run, whose last step sends the blog-trigger event here; or by hand. It shares its queue (concurrency group daily-release) with the Daily Data Release above, so it waits if a release is running. It starts nothing else: the site reads the files it uploads.",
+      "select": {
+        "events": [
+          "repository_dispatch",
+          "workflow_dispatch"
+        ],
+        "require_jobs": [
+          "^build$"
+        ]
+      },
+      "jobs": [
+        {
+          "name": "build",
+          "match": "^build$",
+          "about": "Builds the blog's parquet files from the torpdata releases and uploads them to R2",
+          "steps": {
+            "Checkout torp package (for simulations)": "Downloads the torp package, which the season simulations and the team-name tidying need",
+            "Download source parquets": "Downloads the inputs from the torpdata releases: team and player ratings, predictions (including the backfilled and retrodiction ones), player details, play-by-play, per-game ratings, raw game stats, fixtures and the shot model; stops the run if a required set is incomplete",
+            "Aggregate": "Runs scripts/build_blog_data.R: builds the blog's ratings, team ratings, predictions, player details, game logs and game stats, shots, injuries and the Monte Carlo season simulations and team strength files, into blog/",
+            "Build AFL chain parquet (per-row WP/WPA-credit chain data)": "Runs scripts/build_afl_chains.R: builds the season's chain-events file (every event in the chain feed with expected points and running score) and the player-quarters file (each player's expected points added and win probability added per quarter)",
+            "Rebuild + publish player skills history": "Joins the per-season player stat ratings into one all-seasons history and republishes it to the player_skills-data release (no recomputing; a failure only warns)",
+            "Download extra parquets for R2": "Downloads files torp has already released and renames them for the site: team lineups, the finals matchup table, player skills (and the latest row per player), the net points breakdown and the skills history; each is optional and a missing one only warns",
+            "Validate outputs": "Stops the run if any of the required files is missing (ratings, team ratings, predictions, player details, game logs); only warns about missing optional ones such as simulations and shots",
+            "Snapshot dated predictions + injuries (torpdata#77)": "Saves a dated copy of today's predictions and injuries, so what the model said on a past day can be shown later",
+            "Strip oversized R metadata from parquets": "Rewrites any file whose footer is over 1 MB so browsers do not download the extra R information (a failure here does not stop the run)",
+            "Run actions/setup-node@v7": "Installs Node 20",
+            "Install wrangler": "Installs Cloudflare's wrangler tool used for the upload",
+            "Upload to R2": "Uploads every file in blog/ to the R2 store at inthegame-data/afl/, with up to 3 attempts per file"
+          }
+        }
+      ]
+    }
+  ]
+}
