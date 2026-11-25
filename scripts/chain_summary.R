@@ -15,13 +15,14 @@
 #   * Rows: the feed lists the event at every chain boundary twice; the copy
 #     (repeat_of_prev) is dropped. Its np_value is folded into the row it
 #     repeats, so chains still add up to the margin (chain-viz.js).
-#     Exception (agreed with the blog session 2026-11-24): a copy that is the
-#     whole of its own chain AND carries a score is kept as that chain's row,
-#     with its own np_value (all its rows, if it has several; 2021-2026 has only
-#     one-row ones). These are rushed-behind chains, 5-11 a
-#     season; dropping them lost the point. Unscored copy-only chains (~250 a
-#     season) are still dropped: keeping them would change which chain counts
-#     as the "next chain" after a turnover, which is a rule change, not a fix.
+#     Exception (Pete 2026-11-25, walked with the blog session on Ned Long R1
+#     2026, CD_M20260140106 events 815-819): a copy that is the whole of its
+#     own chain is kept as that chain's row, scored or not, with its own
+#     np_value (not folded). It is the ball won and lost at once (a free given
+#     away, ~200 a season), the ball won as the quarter ends, or a rushed
+#     behind (5-11 a season). Kept chains count as the "next chain" after a
+#     turnover too, as in chain-viz.js and build-afl-turnover-points.mjs
+#     uniqueRows(): change all three together.
 #   * Chain team: the side that scored in it (the last score row's team; a
 #     rushed behind belongs to the side it was rushed against, as the feed
 #     records it), otherwise the side with most rows (ties: the side seen
@@ -46,6 +47,13 @@
 #     lost later in a contest is nobody's fault. A chain with a "Shot At Goal"
 #     row from that disposal on is a missed shot, not a turnover: no blame and
 #     no points_from_turnover.
+#   * Free given away straight after winning the ball (Pete 2026-11-25): a
+#     copy-only chain ending in a turnover, whose next chain in the same
+#     quarter opens with description exactly "Free For" by the other side, is a
+#     counted turnover charged to the copy's last named player (the
+#     ball-winner) as a clanger, with the next chain's points. Not charged:
+#     "Free For: Off The Ball" (offender not named) and a copy chain followed
+#     by anything else.
 #   * points_from_turnover: on the chain that LOST the ball, what the other side
 #     scored in the very next chain, in the same quarter (0 if nothing). NA on
 #     every chain that is not a counted turnover. turnover_won_by_player_id: the
@@ -61,14 +69,14 @@ suppressMessages(library(data.table))
 CHAIN_SCORE_PTS <- c(GOAL = 6L, BEHIND = 1L, RUSHED_BEHIND = 1L)
 
 # Sets repeat_of_prev to "this copy is dropped", by reference: NA becomes FALSE,
-# and a scored copy that is the whole of its chain is kept (see the header).
-# Shared by the build and its check so both count the same rows.
+# and a copy that is the whole of its chain is kept (see the header). Adds
+# copy_only_chain (TRUE on every row of a chain made only of copies), which the
+# free-against turnover rule reads. Shared by the build and its check so both
+# count the same rows.
 .mark_droppable_copies <- function(ev) {
   ev[is.na(repeat_of_prev), repeat_of_prev := FALSE]
-  ev[, keep_copy := repeat_of_prev & all(repeat_of_prev) & any(!is.na(score_type)),
-     by = .(match_id, chain_number)]
-  ev[keep_copy == TRUE, repeat_of_prev := FALSE]
-  ev[, keep_copy := NULL]
+  ev[, copy_only_chain := all(repeat_of_prev), by = .(match_id, chain_number)]
+  ev[copy_only_chain == TRUE, repeat_of_prev := FALSE]
   invisible(ev)
 }
 
@@ -163,6 +171,12 @@ build_chain_summary <- function(events) {
     } else NA_integer_
     shot <- !is.na(gi) && any(grepl("Shot At Goal", description[gi:.N], ignore.case = TRUE), na.rm = TRUE)
     counted <- !is.na(gi) && !shot
+    # free-against candidate: a copy-only turnover chain with no disposal; its
+    # last named row is the ball-winner (decided below, once the next chain is known)
+    g0 <- if (identical(last_final, "turnover") && is.na(gi) && all(copy_only_chain)) {
+      k0 <- which(!is.na(player_id) & !is.na(team_id)); if (length(k0)) k0[length(k0)] else NA_integer_
+    } else NA_integer_
+    g0_shot <- !is.na(g0) && any(grepl("Shot At Goal", description[g0:.N], ignore.case = TRUE), na.rm = TRUE)
     .(round = round_number[1], period = period[1],
       first_order = display_order[1],
       team_id = tm,
@@ -190,6 +204,9 @@ build_chain_summary <- function(events) {
       tov_team_id = if (counted) team_id[gi] else NA_character_,
       tov_player_id = if (counted) player_id[gi] else NA_character_,
       tov_disposal = if (counted) disposal[gi] else NA_character_,
+      fa_team_id = if (!is.na(g0) && !g0_shot) team_id[g0] else NA_character_,
+      fa_player_id = if (!is.na(g0) && !g0_shot) player_id[g0] else NA_character_,
+      first_desc = description[1], first_team_id = team_id[1],
       first_home_named = first_named_of(player_id, team_id, hid),
       first_away_named = first_named_of(player_id, team_id, aid),
       home_team_id = hid, away_team_id = aid)
@@ -200,8 +217,15 @@ build_chain_summary <- function(events) {
   cs[, `:=`(nx_period = shift(period, type = "lead"), nx_home_pts = shift(home_pts, type = "lead"),
             nx_away_pts = shift(away_pts, type = "lead"),
             nx_first_home = shift(first_home_named, type = "lead"),
-            nx_first_away = shift(first_away_named, type = "lead")), by = match_id]
+            nx_first_away = shift(first_away_named, type = "lead"),
+            nx_first_desc = shift(first_desc, type = "lead"),
+            nx_first_team = shift(first_team_id, type = "lead")), by = match_id]
   cs[, same_q := !is.na(nx_period) & nx_period == period]
+  # Free given away straight after winning the ball (see the header).
+  cs[, free_against := !is.na(fa_team_id) & same_q & nx_first_desc %chin% "Free For" &
+                       !is.na(nx_first_team) & nx_first_team != fa_team_id]
+  cs[free_against == TRUE, `:=`(tov_counted = TRUE, tov_team_id = fa_team_id,
+                                tov_player_id = fa_player_id, tov_disposal = "clanger")]
   cs[, tov_by_home := tov_team_id == home_team_id]
   cs[, points_from_turnover := fifelse(!tov_counted, NA_integer_,
                                        fifelse(!same_q, 0L, fifelse(tov_by_home, nx_away_pts, nx_home_pts)))]
