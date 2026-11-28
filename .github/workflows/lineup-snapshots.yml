@@ -47,6 +47,9 @@ jobs:
 
       - name: Any match near? (scheduled runs only)
         id: gate
+        # A crash here must not cost the hour's snapshot: later steps run unless
+        # this step wrote run=false.
+        continue-on-error: true
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -60,7 +63,7 @@ jobs:
           echo "::notice::Lineup gate: $([ "$run" = "true" ] && echo RUN || echo SKIP) -- $(echo "$res" | sed -n 's/^reason=//p')"
 
       - name: Checkout torp
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run != 'false'
         uses: actions/checkout@v7
         with:
           repository: peteowen1/torp
@@ -68,14 +71,14 @@ jobs:
           path: torp
 
       - name: Setup R
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run != 'false'
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: '4.4.0'
           use-public-rspm: true
 
       - name: Setup R dependencies
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run != 'false'
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
           working-directory: torp
@@ -92,7 +95,7 @@ jobs:
             devtools
 
       - name: Snapshot team lists
-        if: steps.gate.outputs.run == 'true'
+        if: steps.gate.outputs.run != 'false'
         working-directory: torp
         run: Rscript data-raw/01-data/snapshot_lineups.R
         env:
