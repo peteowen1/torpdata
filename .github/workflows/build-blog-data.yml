@@ -395,32 +395,4 @@ jobs:
             echo "::error::Cloudflare credentials not configured"
             exit 1
           fi
-          shopt -s nullglob
-          files=(blog/*.parquet)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "::error::No parquet files found in blog/ — R aggregation may have failed"
-            exit 1
-          fi
-          retry_upload() {
-            local file="$1" key="$2" max_attempts=3 attempt=1
-            while [ $attempt -le $max_attempts ]; do
-              # Cache-Control lets browsers/CF cache + revalidate via ETag (304)
-              # instead of re-downloading megabytes (inthegame-blog #388).
-              if wrangler r2 object put "$key" --file "$file" --cache-control "public, max-age=300" --remote; then
-                return 0
-              fi
-              echo "::warning::Upload attempt $attempt/$max_attempts failed for $key, retrying in $(( 2 ** attempt ))s"
-              sleep $(( 2 ** attempt ))
-              attempt=$(( attempt + 1 ))
-            done
-            return 1
-          }
-          for f in "${files[@]}"; do
-            key="inthegame-data/afl/$(basename $f)"
-            echo "Uploading $key..."
-            if ! retry_upload "$f" "$key"; then
-              echo "::error::Failed to upload $key after 3 attempts"
-              exit 1
-            fi
-          done
-          echo "Uploaded ${#files[@]} files to R2 (afl/ prefix)"
+          bash .github/scripts/r2_upload.sh blog inthegame-data/afl
