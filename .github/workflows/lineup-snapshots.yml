@@ -10,6 +10,12 @@ name: Team-List Snapshots
 # Hourly every day. Lists are usually first named Wed/Thu ~6-7:30 PM AEST,
 # but a Tuesday naming (or a midweek match) is caught too; runs with no match
 # in the window cost one fixtures call and upload nothing.
+#
+# Scheduled runs first ask .github/scripts/lineup_gate.sh (curl + jq, a few
+# seconds) whether any match starts between 12 hours back and 9 days ahead,
+# a window wider than the R code's own (6 hours, 8 days). If none does, R is
+# never installed: that was ~80 s of setup for ~3 s of work, 168 times a week.
+# Anything the script cannot establish runs as before; manual runs always run.
 # GitHub fires `schedule` only from the DEFAULT branch.
 
 on:
@@ -39,7 +45,22 @@ jobs:
       - name: Checkout torpdata
         uses: actions/checkout@v7
 
+      - name: Any match near? (scheduled runs only)
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Lineup gate: RUN -- manual run"
+            exit 0
+          fi
+          res=$(bash .github/scripts/lineup_gate.sh) || res="run=true"
+          run=$(echo "$res" | sed -n 's/^run=//p')
+          [ "$run" = "false" ] || run=true
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "::notice::Lineup gate: $([ "$run" = "true" ] && echo RUN || echo SKIP) -- $(echo "$res" | sed -n 's/^reason=//p')"
+
       - name: Checkout torp
+        if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v7
         with:
           repository: peteowen1/torp
@@ -47,12 +68,14 @@ jobs:
           path: torp
 
       - name: Setup R
+        if: steps.gate.outputs.run == 'true'
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: '4.4.0'
           use-public-rspm: true
 
       - name: Setup R dependencies
+        if: steps.gate.outputs.run == 'true'
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
           working-directory: torp
@@ -69,6 +92,7 @@ jobs:
             devtools
 
       - name: Snapshot team lists
+        if: steps.gate.outputs.run == 'true'
         working-directory: torp
         run: Rscript data-raw/01-data/snapshot_lineups.R
         env:
