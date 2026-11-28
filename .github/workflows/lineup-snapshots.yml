@@ -60,7 +60,7 @@ jobs:
           run=$(echo "$res" | sed -n 's/^run=//p')
           [ "$run" = "false" ] || run=true
           echo "run=$run" >> "$GITHUB_OUTPUT"
-          echo "::notice::Lineup gate: $([ "$run" = "true" ] && echo RUN || echo SKIP) -- $(echo "$res" | sed -n 's/^reason=//p')"
+          echo "::notice::Lineup gate: $([ "$run" = "true" ] && echo RUN || echo SKIP) -- $(echo "$res" | sed -n 's/^reason=//p' | head -n 1 | tr -cd 'A-Za-z0-9 ()/.,-' | head -c 200)"
 
       - name: Checkout torp
         if: steps.gate.outputs.run != 'false'

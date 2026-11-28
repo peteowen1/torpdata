@@ -17,10 +17,14 @@ for y in "$year" "$((year + 1))"; do
   [ -z "$id" ] && continue
   m=$(curl -sf --max-time 30 "$api/matches?compSeasonId=$id&pageSize=500") || out true "fixtures for $y unreadable"
   pages=$(echo "$m" | jq -r '.meta.pagination.numPages' 2>/dev/null) || out true "fixtures for $y unparseable"
-  [ "$pages" = "1" ] || [ "$pages" = "0" ] || out true "fixtures for $y span $pages pages"
+  # Only "0" or "1" may pass: the value comes from the API and must never
+  # reach the reason text (the workflow prints that as a ::notice:: command).
+  [ "$pages" = "1" ] || [ "$pages" = "0" ] || out true "fixtures for $y are not on one page"
   counts=$(echo "$m" | jq -r --argjson now "$now" --argjson lb "$LOOKBACK_H" --argjson la "$LOOKAHEAD_D" '
     [.matches[] | (.utcStartTime | if endswith("+0000") then .[0:19] + "Z" else error("not UTC") end | fromdateiso8601)] as $t
     | "\($t | length) \([$t[] | select(. >= $now - $lb * 3600 and . <= $now + $la * 86400)] | length)"' 2>/dev/null) || out true "a start time in $y could not be read"
+  # Two plain integers or nothing: a malformed count must run, not skip.
+  [[ "$counts" =~ ^[0-9]+\ [0-9]+$ ]] || out true "match counts for $y could not be read"
   total=$((total + ${counts% *})); hits=$((hits + ${counts#* }))
 done
 [ "$total" -gt 0 ] || out true "no fixtures found for $year or $((year + 1))"
