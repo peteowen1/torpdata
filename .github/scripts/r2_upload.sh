@@ -35,7 +35,9 @@ upload_one() {
       return 0
     fi
     if [ "$attempt" -lt 3 ]; then
-      echo "::warning::Upload attempt $attempt/3 failed for $key, retrying in $(( 2 ** attempt ))s"
+      printf '%s
+::warning::Upload attempt %s/3 failed for %s, retrying in %ss
+'         "$out" "$attempt" "$key" "$(( 2 ** attempt ))"
       sleep $(( 2 ** attempt ))
     fi
     attempt=$(( attempt + 1 ))
